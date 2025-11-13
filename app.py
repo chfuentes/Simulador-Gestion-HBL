@@ -250,27 +250,36 @@ def mc_simulation_adaptive(muN, sdN, muD, sdD, n=N_SIM, seed=SEED):
     return median_N, median_D, median_pct
 
 def next_three_months_from_last(df):
-    # Detectar y mostrar periodicidad
+    """Determina los próximos períodos a proyectar según la periodicidad"""
     try:
         periodo_info = detect_periodicity(df)
-        tipo_periodo = periodo_info['tipo']
-        confianza = periodo_info['confianza']
         
-        if tipo_periodo == 'mensual':
-            st.success(f"📅 **Periodicidad detectada:** MENSUAL (confianza: {confianza})")
-            st.info("Se proyectarán los próximos 3 meses")
-        elif tipo_periodo == 'trimestral':
-            st.warning(f"📅 **Periodicidad detectada:** TRIMESTRAL (confianza: {confianza})")
-            st.info("Se proyectará solo el próximo trimestre")
-        elif tipo_periodo == 'semestral':
-            st.warning(f"📅 **Periodicidad detectada:** SEMESTRAL (confianza: {confianza})")
-            st.info("Se proyectará solo el próximo semestre")
-        else:
-            st.error(f"📅 **Periodicidad:** IRREGULAR (confianza: {confianza})")
-            st.warning("Los datos no siguen un patrón claro. Se usarán proyecciones mensuales por defecto.")
+        if periodo_info['tipo'] == 'mensual':
+            last_m = int(df["m"].iloc[-1])
+            months = [((last_m + i - 1) % 12) + 1 for i in (1,2,3)]
+            return months
+        elif periodo_info['tipo'] in ['trimestral', 'semestral']:
+            # Para trimestral/semestral, proyectar solo 1 período pero representado como lista
+            last_m = int(df["m"].iloc[-1])
+            # Calcular el próximo período
+            if periodo_info['tipo'] == 'trimestral':
+                next_month = ((last_m + 2) // 3) * 3 + 1  # Siguiente trimestre
+                if next_month > 12:
+                    next_month = 1
+            else:  # semestral
+                next_month = 7 if last_m <= 6 else 1  # Siguiente semestre
             
+            return [next_month]  # Retornar como lista con un elemento
+        else:
+            # Por defecto, mensual (3 meses)
+            last_m = int(df["m"].iloc[-1])
+            months = [((last_m + i - 1) % 12) + 1 for i in (1,2,3)]
+            return months
     except Exception as e:
-        st.warning("📅 No se pudo detectar la periodicidad. Usando proyección mensual por defecto.")
+        # Fallback a mensual si hay error
+        last_m = int(df["m"].iloc[-1])
+        months = [((last_m + i - 1) % 12) + 1 for i in (1,2,3)]
+        return months
 
 def generate_comprehensive_report(df, results):
     """Genera reporte con todos los resultados"""
@@ -509,25 +518,37 @@ def simulate_target_percentage(df, target_pct):
     """
     Simula numeradores y denominadores necesarios para alcanzar un porcentaje objetivo
     """
+    # Detectar periodicidad
+    periodo_info = detect_periodicity(df)
+    
+    # Obtener el próximo período según la periodicidad
+    future_periods = next_three_months_from_last(df)
+    next_period_num = future_periods[0]
+    
+    # Determinar nombre del período
+    if periodo_info['tipo'] == 'trimestral':
+        period_name = f"Trimestre {(next_period_num - 1) // 3 + 1}"
+    elif periodo_info['tipo'] == 'semestral':
+        period_name = "Semestre 1" if next_period_num <= 6 else "Semestre 2"
+    else:
+        period_name = N2M[next_period_num]
+    
     # Parámetros globales
     muN, sdN = df["NUMERADOR"].mean(), df["NUMERADOR"].std(ddof=1)
     muD, sdD = df["DENOMINADOR"].mean(), df["DENOMINADOR"].std(ddof=1)
     
-    # Obtener el próximo mes
-    future_month = next_three_months_from_last(df)[0]
-    month_name = N2M[future_month]
-    
-    # Índices estacionales
-    idxN, idxD = seasonal_indices(df)
+    # Índices estacionales (solo para mensual)
+    idxN, idxD = seasonal_indices(df) if periodo_info['tipo'] == 'mensual' else (pd.Series(), pd.Series())
     
     # Método 1: Promedio - usar promedio mensual histórico
     avg_num, avg_den, avg_pct = average_method(df)
-    target_avg_num = max(0, round(target_pct * avg_den))  # Redondear y evitar negativos
-    target_avg_den = max(1, round(avg_den))  # Al menos 1
+    target_avg_num = max(0, round(target_pct * avg_den))
+    target_avg_den = max(1, round(avg_den))
     
     # Método 2: Lineal - proyectar y redondear
-    predN_lin = linear_trend_forecast_improved(df["NUMERADOR"], steps=1)[0]
-    predD_lin = linear_trend_forecast_improved(df["DENOMINADOR"], steps=1)[0]
+    steps = 3 if periodo_info['tipo'] == 'mensual' else 1
+    predN_lin = linear_trend_forecast_improved(df["NUMERADOR"], steps=steps)[0]
+    predD_lin = linear_trend_forecast_improved(df["DENOMINADOR"], steps=steps)[0]
     target_lin_num = max(0, round(target_pct * predD_lin))
     target_lin_den = max(1, round(predD_lin))
     
@@ -536,15 +557,21 @@ def simulate_target_percentage(df, target_pct):
     target_mc_num = max(0, round(target_pct * mc_den))
     target_mc_den = max(1, round(mc_den))
     
-    # Método 4: MC Estacional
-    muNm = muN * idxN.get(future_month, 1.0) if not idxN.empty else muN
-    muDm = muD * idxD.get(future_month, 1.0) if not idxD.empty else muD
-    mc_seas_num, mc_seas_den, mc_seas_pct = mc_simulation_adaptive(muNm, sdN, muDm, sdD, seed=SEED + 1000)
-    target_mc_seas_num = max(0, round(target_pct * mc_seas_den))
-    target_mc_seas_den = max(1, round(mc_seas_den))
+    # Método 4: MC Estacional (solo para mensual)
+    if periodo_info['tipo'] == 'mensual' and not idxN.empty:
+        muNm = muN * idxN.get(next_period_num, 1.0)
+        muDm = muD * idxD.get(next_period_num, 1.0)
+        mc_seas_num, mc_seas_den, mc_seas_pct = mc_simulation_adaptive(muNm, sdN, muDm, sdD, seed=SEED + 1000)
+        target_mc_seas_num = max(0, round(target_pct * mc_seas_den))
+        target_mc_seas_den = max(1, round(mc_seas_den))
+    else:
+        # Para trimestral/semestral, usar MC normal
+        target_mc_seas_num = target_mc_num
+        target_mc_seas_den = target_mc_den
     
     return {
-        'Mes': month_name,
+        'Mes': period_name,
+        'Tipo_Periodo': periodo_info['tipo'],
         'Porcentaje_Objetivo': target_pct,
         # Promedio
         'Promedio_num': target_avg_num,
@@ -866,29 +893,56 @@ def main():
         with st.spinner("Calculando proyecciones..."):
             future_months = next_three_months_from_last(df)
             
+            # Mostrar información de periodicidad
+            periodo_info = detect_periodicity(df)
+            if periodo_info['tipo'] == 'mensual':
+                st.info(f"📅 **Periodicidad:** MENSUAL - Proyectando 3 meses")
+            elif periodo_info['tipo'] == 'trimestral':
+                st.info(f"📅 **Periodicidad:** TRIMESTRAL - Proyectando 1 trimestre")
+            elif periodo_info['tipo'] == 'semestral':
+                st.info(f"📅 **Periodicidad:** SEMESTRAL - Proyectando 1 semestre")
+            else:
+                st.warning(f"📅 **Periodicidad:** IRREGULAR - Proyectando 3 meses por defecto")
+            
             # Parámetros globales
             muN, sdN = df["NUMERADOR"].mean(), df["NUMERADOR"].std(ddof=1)
             muD, sdD = df["DENOMINADOR"].mean(), df["DENOMINADOR"].std(ddof=1)
             
-            # Índices estacionales
-            idxN, idxD = seasonal_indices(df)
+            # Índices estacionales (solo para mensual)
+            idxN, idxD = seasonal_indices(df) if periodo_info['tipo'] == 'mensual' else (pd.Series(), pd.Series())
             
-            # Método del promedio (constante para los 3 meses)
+            # Método del promedio (constante para todos los períodos)
             avg_num, avg_den, avg_pct = average_method(df)
             
-            # Métodos lineales
-            predN_lin = linear_trend_forecast_improved(df["NUMERADOR"], steps=3)
-            predD_lin = linear_trend_forecast_improved(df["DENOMINADOR"], steps=3)
+            # Métodos lineales - ajustar steps según periodicidad
+            if periodo_info['tipo'] == 'mensual':
+                steps = 3
+            else:
+                steps = 1
+            
+            predN_lin = linear_trend_forecast_improved(df["NUMERADOR"], steps=steps)
+            predD_lin = linear_trend_forecast_improved(df["DENOMINADOR"], steps=steps)
             
             # Recolectar resultados
             results = []
             
             for i, month_num in enumerate(future_months):
-                # Parámetros estacionales
-                muNm = muN * idxN.get(month_num, 1.0) if not idxN.empty else muN
-                muDm = muD * idxD.get(month_num, 1.0) if not idxD.empty else muD
-                sdNm = sdN * idxN.get(month_num, 1.0) if not idxN.empty else sdN  # SIN sqrt
-                sdDm = sdD * idxD.get(month_num, 1.0) if not idxD.empty else sdD  # SIN sqrt
+                # Para periodicidades no mensuales, ajustar el nombre del período
+                if periodo_info['tipo'] == 'trimestral':
+                    period_name = f"Trimestre {(month_num - 1) // 3 + 1}"
+                elif periodo_info['tipo'] == 'semestral':
+                    period_name = "Semestre 1" if month_num <= 6 else "Semestre 2"
+                else:
+                    period_name = N2M[month_num]
+                
+                # Parámetros estacionales (solo para mensual)
+                if not idxN.empty and periodo_info['tipo'] == 'mensual':
+                    muNm = muN * idxN.get(month_num, 1.0)
+                    muDm = muD * idxD.get(month_num, 1.0)
+                    sdNm = sdN * idxN.get(month_num, 1.0)
+                    sdDm = sdD * idxD.get(month_num, 1.0)
+                else:
+                    muNm, muDm, sdNm, sdDm = muN, muD, sdN, sdD
                 
                 # Método lineal
                 lin_num = predN_lin[i]
@@ -897,10 +951,15 @@ def main():
                 
                 # Métodos Monte Carlo
                 mc_num, mc_den, mc_pct = mc_simulation_adaptive(muN, sdN, muD, sdD, seed=SEED + i*100)
-                mc_seas_num, mc_seas_den, mc_seas_pct = mc_simulation_adaptive(muNm, sdNm, muDm, sdDm, seed=SEED + 1000 + i*100)
+                
+                # MC Estacional solo para datos mensuales
+                if periodo_info['tipo'] == 'mensual' and not idxN.empty:
+                    mc_seas_num, mc_seas_den, mc_seas_pct = mc_simulation_adaptive(muNm, sdNm, muDm, sdDm, seed=SEED + 1000 + i*100)
+                else:
+                    mc_seas_num, mc_seas_den, mc_seas_pct = mc_num, mc_den, mc_pct
                 
                 results.append({
-                    'Mes': N2M[month_num],
+                    'Mes': period_name,
                     # Promedio
                     'Promedio_num': avg_num,
                     'Promedio_den': avg_den,
