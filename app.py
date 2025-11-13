@@ -407,7 +407,7 @@ def main():
         st.markdown("---")
         st.markdown("""
         PRISMA - Proyección y Simulación para Metas COMGES  
-        Versión 0.8 - 2025-06-15 
+        Versión 0.85 - 2025-06-15 
         © Christian Fuentes + IA.
                     
                     """)
@@ -423,16 +423,6 @@ def main():
 
             # Mostrar información básica
             st.success(f"✅ {len(df)} registros procesados correctamente")
-            
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Período", f"{len(df)} meses")
-            with col2:
-                st.metric("Numerador Prom.", f"{df['NUMERADOR'].mean():.1f}")
-            with col3:
-                st.metric("Denominador Prom.", f"{df['DENOMINADOR'].mean():.1f}")
-            with col4:
-                st.metric("% Histórico", f"{df['pct'].mean():.2%}")
 
         # Realizar proyecciones
         with st.spinner("Calculando proyecciones..."):
