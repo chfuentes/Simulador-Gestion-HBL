@@ -10,9 +10,9 @@ Aplicación web para proyecciones usando múltiples métodos estadísticos.
 - Reportes HTML descargables
 - Interfaz responsive
 
-## Formato del CSV
+## Formato del Archivo
 
-El archivo CSV debe contener:
+El archivo debe contener la siguiente estructura:
 - AÑO (año del registro)
 - MES (nombre del mes en español)
 - NUMERADOR (valor numérico)

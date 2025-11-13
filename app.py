@@ -1,4 +1,4 @@
-# app.py (versión producción)
+# app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -11,7 +11,7 @@ warnings.filterwarnings('ignore')
 
 # Configuración optimizada para producción
 st.set_page_config(
-    page_title="Simulador Estadístico",
+    page_title="Simulador Avanzado de Proyecciones Organizacionales",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -22,21 +22,18 @@ MONTHS = ['ENERO','FEBRERO','MARZO','ABRIL','MAYO','JUNIO',
           'JULIO','AGOSTO','SEPTIEMBRE','OCTUBRE','NOVIEMBRE','DICIEMBRE']
 M2N = {m:i+1 for i,m in enumerate(MONTHS)}
 N2M = {i+1:m for i,m in enumerate(MONTHS)}
-N_SIM = 10000  # Reducido para mejor performance web
+N_SIM = 10000
 SEED = 42
 
-@st.cache_data(show_spinner=False)
-def read_and_trim(uploaded_file):
+def read_and_process_file(uploaded_file):
     """Lee y procesa archivos CSV o Excel subidos"""
     try:
         # Determinar el tipo de archivo
         file_extension = uploaded_file.name.split('.')[-1].lower()
         
         if file_extension in ['csv']:
-            # Procesar archivo CSV
             return _process_csv_file(uploaded_file)
         elif file_extension in ['xls', 'xlsx']:
-            # Procesar archivo Excel
             return _process_excel_file(uploaded_file)
         else:
             st.error(f"Formato de archivo no soportado: {file_extension}")
@@ -48,83 +45,64 @@ def read_and_trim(uploaded_file):
 
 def _process_csv_file(uploaded_file):
     """Procesa archivos CSV"""
-    # Intentar diferentes combinaciones de encoding y separador
     encodings = ['latin-1', 'utf-8', 'cp1252', 'iso-8859-1']
     separators = [';', ',', '\t']
     
     for encoding in encodings:
         for separator in separators:
             try:
-                uploaded_file.seek(0)  # Resetear el archivo
+                uploaded_file.seek(0)
                 df = pd.read_csv(
                     uploaded_file, 
                     sep=separator,
                     encoding=encoding,
                     decimal=',',
                     engine='python',
-                    thousands='.'  # Para formato europeo 1.000,00
+                    thousands='.'
                 )
                 st.success(f"✅ CSV leído con: encoding={encoding}, separator='{separator}'")
                 return _process_dataframe(df)
             except Exception as e:
                 continue
     
-    # Si fallan todas las combinaciones, mostrar error
     st.error("No se pudo leer el archivo CSV. Verifica el formato.")
     return None
 
 def _process_excel_file(uploaded_file):
     """Procesa archivos Excel"""
     try:
-        # Leer el archivo Excel
         uploaded_file.seek(0)
         excel_file = pd.ExcelFile(uploaded_file)
         
-        # Mostrar las hojas disponibles
         if len(excel_file.sheet_names) > 1:
             st.info(f"📑 Hojas disponibles: {excel_file.sheet_names}")
-            # Por defecto usar la primera hoja, pero podrías agregar selección
             sheet_name = excel_file.sheet_names[0]
             st.write(f"Usando hoja: '{sheet_name}'")
         else:
             sheet_name = excel_file.sheet_names[0]
         
-        # Leer la hoja seleccionada
-        df = pd.read_excel(
-            uploaded_file, 
-            sheet_name=sheet_name,
-            engine='openpyxl'  # Para xlsx, para xls usar 'xlrd'
-        )
+        # Determinar engine según extensión
+        engine = 'openpyxl' if uploaded_file.name.endswith('.xlsx') else 'xlrd'
         
+        df = pd.read_excel(uploaded_file, sheet_name=sheet_name, engine=engine)
         st.success(f"✅ Excel leído correctamente - Hoja: '{sheet_name}'")
         return _process_dataframe(df)
         
     except Exception as e:
         st.error(f"Error al leer archivo Excel: {e}")
-        # Intentar con engine alternativo para xls
-        if uploaded_file.name.endswith('.xls'):
-            try:
-                uploaded_file.seek(0)
-                df = pd.read_excel(uploaded_file, engine='xlrd')
-                return _process_dataframe(df)
-            except:
-                st.error("Necesitas instalar 'xlrd' para archivos .xls antiguos")
         return None
 
 def _process_dataframe(df):
-    """Procesa el DataFrame independientemente del origen (CSV/Excel)"""
-    # Mostrar información del archivo cargado
+    """Procesa el DataFrame independientemente del origen"""
     st.write("📋 **Columnas detectadas en el archivo:**")
     st.write(df.columns.tolist())
-    st.write(f"📊 **Registros cargados:** {len(df)}")
     
     # Normalizar nombres de columnas
     column_mapping = {}
     for col in df.columns:
         col_clean = str(col).strip().upper()
         
-        # Manejar diferentes nombres posibles
-        if any(x in col_clean for x in ['AČO', 'AÑO', 'ANIO', 'AÑO', 'YEAR']):
+        if any(x in col_clean for x in ['AČO', 'AÑO', 'ANIO', 'YEAR']):
             column_mapping[col] = 'ANIO'
         elif any(x in col_clean for x in ['MES', 'MONTH']):
             column_mapping[col] = 'MES'
@@ -132,28 +110,23 @@ def _process_dataframe(df):
             column_mapping[col] = 'NUMERADOR'
         elif any(x in col_clean for x in ['DENOMINADOR', 'DENOMINATOR', 'POBLACION', 'TOTAL']):
             column_mapping[col] = 'DENOMINADOR'
-        elif '%' in col_clean or 'PORCENTAJE' in col_clean or 'PORC' in col_clean:
-            continue  # Saltar columna de porcentaje
+        elif '%' in col_clean or 'PORCENTAJE' in col_clean:
+            continue
     
     df = df.rename(columns=column_mapping)
     
-    # Verificar que tenemos las columnas necesarias
+    # Verificar columnas requeridas
     required_columns = ['ANIO', 'MES', 'NUMERADOR', 'DENOMINADOR']
     missing_columns = [col for col in required_columns if col not in df.columns]
     
     if missing_columns:
         st.error(f"❌ Faltan columnas requeridas: {missing_columns}")
-        st.write("📋 Columnas disponibles en el archivo:", df.columns.tolist())
-        
-        # Mostrar vista previa para ayudar a identificar columnas
-        st.write("👀 **Vista previa de los datos (primeras 5 filas):**")
-        st.dataframe(df.head())
+        st.write("Columnas disponibles:", df.columns.tolist())
         return None
     
-    # Limpieza y procesamiento de datos
+    # Limpieza y procesamiento
     df["MES"] = df["MES"].astype(str).str.strip().str.upper()
     
-    # Mapear meses a números
     mes_mapping = {
         'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4, 'MAYO': 5, 'JUNIO': 6,
         'JULIO': 7, 'AGOSTO': 8, 'SEPTIEMBRE': 9, 'OCTUBRE': 10, 'NOVIEMBRE': 11, 'DICIEMBRE': 12,
@@ -163,125 +136,76 @@ def _process_dataframe(df):
     
     df["m"] = df["MES"].map(mes_mapping)
     
-    # Si algún mes no se mapeó, mostrar advertencia
-    unmapped_months = df[df["m"].isna()]["MES"].unique()
-    if len(unmapped_months) > 0:
-        st.warning(f"⚠️ Meses no reconocidos: {list(unmapped_months)}")
-        # Eliminar filas con meses no reconocidos
-        df = df.dropna(subset=["m"])
-    
     # Convertir columnas numéricas
     for c in ["NUMERADOR", "DENOMINADOR"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
     
-    # Eliminar filas totalmente vacías y ordenar
-    df = df.dropna(how="all").sort_values(["ANIO", "m"], na_position="last").reset_index(drop=True)
-    
-    # Cortar en la primera fila con algún faltante en columnas clave
+    # Eliminar filas problemáticas
+    df = df.dropna(how="all").sort_values(["ANIO", "m"]).reset_index(drop=True)
     essential = ["ANIO", "m", "NUMERADOR", "DENOMINADOR"]
-    invalid_mask = df[essential].isna().any(axis=1)
-    if invalid_mask.any():
-        cut_idx = invalid_mask.idxmax()
-        df = df.loc[:cut_idx-1].reset_index(drop=True)
-    
-    # Descarta cualquier fila residual vacía en columnas clave
     df = df.dropna(subset=essential).reset_index(drop=True)
     
     if len(df) == 0:
         st.error("❌ No hay datos válidos después del procesamiento")
         return None
     
-    # Calcular porcentaje
     df["pct"] = df["NUMERADOR"] / df["DENOMINADOR"]
-    
     st.success(f"✅ Datos procesados correctamente: {len(df)} registros válidos")
-    
-    # Mostrar resumen
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Período cubierto", f"{len(df)} meses")
-    with col2:
-        st.metric("Numerador promedio", f"{df['NUMERADOR'].mean():.1f}")
-    with col3:
-        st.metric("Porcentaje promedio", f"{df['pct'].mean():.2%}")
     
     return df
 
+# ============================================================================
+# MÉTODOS DE SIMULACIÓN MEJORADOS - AHORA DEVUELVEN NUM, DEN, PCT
+# ============================================================================
+
 def average_method(df):
-    """Calcula el promedio de los últimos 3 meses"""
+    """Método del promedio - retorna numerador, denominador y porcentaje"""
     last = df.tail(3)
     den = last["DENOMINADOR"].sum(min_count=1)
     num = last["NUMERADOR"].sum(min_count=1)
+    
     if not np.isfinite(den) or den <= 0:
         den = df["DENOMINADOR"].sum(min_count=1)
         num = df["NUMERADOR"].sum(min_count=1)
-    return np.divide(num, den)
+    
+    if den <= 0:
+        return 0.0, 0.0, 0.0
+    
+    pct = num / den
+    return num, den, pct
 
-def linear_trend_forecast(y, steps):
-    """Proyecta una serie temporal usando regresión lineal"""
-    y = pd.to_numeric(y, errors="coerce").dropna().reset_index(drop=True)
-    if len(y) < 3:
-        raise ValueError("Datos insuficientes para regresión.")
-    x = np.arange(len(y)).reshape(-1,1)
-    model = LinearRegression().fit(x, y.values)
-    xf = np.arange(len(y), len(y)+steps).reshape(-1,1)
-    return model.predict(xf)
+def linear_trend_forecast_improved(y, steps):
+    """Pronóstico lineal mejorado con manejo de errores"""
+    y_clean = pd.to_numeric(y, errors="coerce").dropna()
+    
+    if len(y_clean) < 2:
+        last_val = y_clean.iloc[-1] if len(y_clean) > 0 else 0.0
+        return np.full(steps, last_val)
+    
+    x = np.arange(len(y_clean)).reshape(-1, 1)
+    model = LinearRegression().fit(x, y_clean.values)
+    xf = np.arange(len(y_clean), len(y_clean) + steps).reshape(-1, 1)
+    predictions = model.predict(xf)
+    
+    return np.maximum(predictions, 0)
 
 def seasonal_indices(df):
-    """Calcula índices estacionales multiplicativos"""
+    """Calcula índices estacionales"""
+    if len(df) < 6:
+        return pd.Series(dtype=float), pd.Series(dtype=float)
+    
     muN, muD = df["NUMERADOR"].mean(), df["DENOMINADOR"].mean()
+    
+    if muN <= 0 or muD <= 0:
+        return pd.Series(dtype=float), pd.Series(dtype=float)
+    
     idxN = df.groupby("m")["NUMERADOR"].mean() / muN
     idxD = df.groupby("m")["DENOMINADOR"].mean() / muD
+    
     return idxN, idxD
 
-def mc_ratio_poisson(muN, muD, n=N_SIM, seed=SEED):
-    """Monte Carlo con distribución Poisson"""
-    rng = np.random.default_rng(seed)
-    N = rng.poisson(muN, size=n)
-    D = rng.poisson(muD, size=n)
-    D = np.clip(D, 1, None)
-    return float(np.median(N/D))
-
-def mc_ratio_negbinom(muN, varN, muD, varD, n=N_SIM, seed=SEED):
-    """Monte Carlo con distribución Binomial Negativa"""
-    rng = np.random.default_rng(seed)
-    
-    def nb_params(mu, var):
-        if var <= mu:
-            var = mu * 1.1
-        p = mu / var
-        r = mu * mu / (var - mu)
-        return max(r, 0.1), min(max(p, 1e-6), 1-1e-6)
-    
-    rN, pN = nb_params(muN, varN)
-    rD, pD = nb_params(muD, varD)
-    
-    N = rng.negative_binomial(rN, pN, size=n)
-    D = rng.negative_binomial(rD, pD, size=n)
-    D = np.clip(D, 1, None)
-    return float(np.median(N/D))
-
-def mc_ratio_gamma(muN, sdN, muD, sdD, n=N_SIM, seed=SEED):
-    """Monte Carlo con distribución Gamma"""
-    rng = np.random.default_rng(seed)
-    
-    def gamma_params(mu, sd):
-        if sd <= 0:
-            sd = mu * 0.1
-        k = (mu / sd) ** 2
-        theta = sd ** 2 / mu
-        return max(k, 0.1), max(theta, 1e-6)
-    
-    kN, thetaN = gamma_params(muN, sdN)
-    kD, thetaD = gamma_params(muD, sdD)
-    
-    N = rng.gamma(kN, thetaN, size=n)
-    D = rng.gamma(kD, thetaD, size=n)
-    D = np.clip(D, 1e-6, None)
-    return float(np.median(N/D))
-
-def mc_ratio_adaptive(muN, sdN, muD, sdD, n=N_SIM, seed=SEED):
-    """Monte Carlo adaptativo"""
+def mc_simulation_adaptive(muN, sdN, muD, sdD, n=N_SIM, seed=SEED):
+    """Simulación Monte Carlo adaptativa - retorna num, den, pct"""
     rng = np.random.default_rng(seed)
     
     # Determinar distribución para NUMERADOR
@@ -311,7 +235,13 @@ def mc_ratio_adaptive(muN, sdN, muD, sdD, n=N_SIM, seed=SEED):
         D = rng.gamma(max(k, 0.1), max(theta, 1e-6), size=n)
     
     D = np.clip(D, 1e-6, None)
-    return float(np.median(N/D))
+    
+    # Calcular medianas
+    median_N = float(np.median(N))
+    median_D = float(np.median(D))
+    median_pct = median_N / median_D if median_D > 0 else 0.0
+    
+    return median_N, median_D, median_pct
 
 def next_three_months_from_last(df):
     """Determina los próximos 3 meses a proyectar"""
@@ -319,8 +249,17 @@ def next_three_months_from_last(df):
     months = [((last_m + i - 1) % 12) + 1 for i in (1,2,3)]
     return months
 
-def generate_html_report(df, out, muN, sdN, muD, sdD, varN, varD, overdispersed_N, overdispersed_D):
-    """Genera el reporte HTML"""
+def generate_comprehensive_report(df, results):
+    """Genera reporte HTML completo con todos los resultados"""
+    
+    # Crear tabla resumen de porcentajes
+    pct_table = pd.DataFrame({
+        'Mes': [r['Mes'] for r in results],
+        'Promedio': [r['Promedio_pct'] for r in results],
+        'Pronostico_Lineal': [r['Pronostico_Lineal_pct'] for r in results],
+        'MC_Adaptativo': [r['MC_Adaptativo_pct'] for r in results],
+        'MC_Adaptativo_Estacional': [r['MC_Adaptativo_Estacional_pct'] for r in results]
+    })
     
     html_content = f"""
     <!DOCTYPE html>
@@ -328,131 +267,101 @@ def generate_html_report(df, out, muN, sdN, muD, sdD, varN, varD, overdispersed_
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Reporte de Proyecciones</title>
+        <title>Reporte Completo de Proyecciones</title>
         <style>
             body {{ font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }}
-            .container {{ max-width: 100%; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-sizing: border-box; }}
+            .container {{ max-width: 100%; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; }}
             h1 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }}
             h2 {{ color: #34495e; margin-top: 30px; }}
-            
             .table-wrapper {{ overflow-x: auto; margin: 20px 0; }}
-            table {{ width: max-content; min-width: 100%; border-collapse: collapse; font-size: 13px; }}
-            th, td {{ padding: 10px 8px; text-align: right; border: 1px solid #ddd; white-space: nowrap; }}
-            th {{ background: #3498db; color: white; position: sticky; top: 0; z-index: 10; }}
-            td:first-child, th:first-child {{ 
-                text-align: left; 
-                font-weight: bold; 
-                position: sticky; 
-                left: 0; 
-                background: white; 
-                z-index: 5;
-            }}
-            th:first-child {{ background: #3498db; z-index: 15; }}
-            tr:nth-child(even) td:not(:first-child) {{ background: #f2f2f2; }}
-            tr:hover td {{ background: #e8f4f8; }}
-            
-            .recomendacion {{ background: #d5f4e6; padding: 15px; border-left: 4px solid #27ae60; margin: 20px 0; border-radius: 5px; }}
-            .info {{ background: #e8f4f8; padding: 15px; border-left: 4px solid #3498db; margin: 20px 0; border-radius: 5px; }}
-            
-            .metodos-grid {{ 
-                display: grid; 
-                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); 
-                gap: 15px; 
-                margin: 20px 0; 
-            }}
-            .metodo-card {{ 
-                background: #f8f9fa; 
-                padding: 15px; 
-                border-left: 4px solid #95a5a6; 
-                border-radius: 5px; 
-            }}
-            .metodo-card.recomendado {{ border-left-color: #27ae60; background: #d5f4e6; }}
-            .metodo-card h4 {{ margin-top: 0; color: #2c3e50; }}
-            
-            @media (max-width: 768px) {{
-                .container {{ padding: 15px; }}
-                table {{ font-size: 11px; }}
-                th, td {{ padding: 6px 4px; }}
-            }}
+            table {{ width: 100%; border-collapse: collapse; font-size: 12px; }}
+            th, td {{ padding: 8px; text-align: center; border: 1px solid #ddd; }}
+            th {{ background: #3498db; color: white; }}
+            .section {{ margin: 30px 0; }}
+            .method-card {{ background: #f8f9fa; padding: 15px; margin: 10px 0; border-left: 4px solid #3498db; }}
+            .highlight {{ background: #e8f4f8; }}
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>📊 Reporte de Proyecciones Epidemiológicas</h1>
+            <h1>📊 Reporte Completo de Proyecciones</h1>
             
-            <div class="info">
-                <h3>ℹ️ Información del Dataset</h3>
-                <p><strong>Registros:</strong> {len(df)}</p>
-                <p><strong>Período:</strong> {df['ANIO'].min()}/{df['MES'].iloc[0]} - {df['ANIO'].max()}/{df['MES'].iloc[-1]}</p>
-                <p><strong>Numerador (Media ± SD):</strong> {muN:.2f} ± {sdN:.2f}</p>
-                <p><strong>Denominador (Media ± SD):</strong> {muD:.2f} ± {sdD:.2f}</p>
-                <p><strong>Sobredispersión N:</strong> {'Sí' if overdispersed_N else 'No'} (Var/Media = {varN/muN:.2f})</p>
-                <p><strong>Sobredispersión D:</strong> {'Sí' if overdispersed_D else 'No'} (Var/Media = {varD/muD:.2f})</p>
-            </div>
-
-            <div class="recomendacion">
-                <h3>✅ Recomendación</h3>
-                <p>Para datos epidemiológicos, el <strong>Método Monte Carlo Adaptativo Estacional</strong> 
-                es el más apropiado ya que:</p>
-                <ul>
-                    <li>Selecciona automáticamente la distribución probabilística correcta</li>
-                    <li>Considera la estacionalidad de los datos</li>
-                    <li>Maneja apropiadamente conteos pequeños y grandes</li>
-                    <li>Respeta la naturaleza no-negativa de los datos</li>
-                </ul>
-            </div>
-
-            <h2>Proyecciones para los Próximos 3 Meses</h2>
-            <div class="table-wrapper">
-                {out.to_html(index=False, classes='styled-table', float_format=lambda x: f'{x*100:.2f}%')}
+            <div class="section">
+                <h2>📈 Resumen de Proyecciones - Porcentajes</h2>
+                {pct_table.to_html(index=False, float_format=lambda x: f'{x*100:.2f}%')}
             </div>
             
-            <h2>📈 Descripción de Métodos</h2>
-            <div class="metodos-grid">
-                <div class="metodo-card">
+            <div class="section">
+                <h2>🔍 Detalle por Método y Mes</h2>
+    """
+    
+    # Agregar detalles por mes
+    for i, result in enumerate(results):
+        html_content += f"""
+                <div class="method-card">
+                    <h3>📅 {result['Mes']}</h3>
+                    <table>
+                        <tr>
+                            <th>Método</th>
+                            <th>Numerador</th>
+                            <th>Denominador</th>
+                            <th>Porcentaje</th>
+                        </tr>
+                        <tr>
+                            <td><strong>Promedio</strong></td>
+                            <td>{result['Promedio_num']:.1f}</td>
+                            <td>{result['Promedio_den']:.1f}</td>
+                            <td><strong>{result['Promedio_pct']*100:.2f}%</strong></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Pronóstico Lineal</strong></td>
+                            <td>{result['Pronostico_Lineal_num']:.1f}</td>
+                            <td>{result['Pronostico_Lineal_den']:.1f}</td>
+                            <td><strong>{result['Pronostico_Lineal_pct']*100:.2f}%</strong></td>
+                        </tr>
+                        <tr class="highlight">
+                            <td><strong>MC Adaptativo</strong></td>
+                            <td>{result['MC_Adaptativo_num']:.1f}</td>
+                            <td>{result['MC_Adaptativo_den']:.1f}</td>
+                            <td><strong>{result['MC_Adaptativo_pct']*100:.2f}%</strong></td>
+                        </tr>
+                        <tr class="highlight">
+                            <td><strong>MC Adaptativo Estacional</strong></td>
+                            <td>{result['MC_Adaptativo_Estacional_num']:.1f}</td>
+                            <td>{result['MC_Adaptativo_Estacional_den']:.1f}</td>
+                            <td><strong>{result['MC_Adaptativo_Estacional_pct']*100:.2f}%</strong></td>
+                        </tr>
+                    </table>
+                </div>
+        """
+    
+    html_content += """
+            </div>
+            
+            <div class="section">
+                <h2>💡 Métodos Utilizados</h2>
+                <div class="method-card">
                     <h4>📊 Promedio</h4>
-                    <p>Baseline simple basado en los últimos 3 meses disponibles.</p>
+                    <p>Basado en los últimos 3 meses históricos. Método conservador.</p>
                 </div>
-                
-                <div class="metodo-card">
+                <div class="method-card">
                     <h4>📈 Pronóstico Lineal</h4>
-                    <p>Extrapolación de la tendencia histórica mediante regresión lineal.</p>
+                    <p>Extrapolación de tendencia usando regresión lineal simple.</p>
                 </div>
-                
-                <div class="metodo-card">
-                    <h4>🎲 MC Poisson</h4>
-                    <p>Simulación Monte Carlo con distribución Poisson. Apropiado para conteos de eventos raros (λ < 20).</p>
+                <div class="method-card">
+                    <h4>🎲 Monte Carlo Adaptativo</h4>
+                    <p>Simulación probabilística que selecciona automáticamente la distribución más apropiada según las características de los datos.</p>
                 </div>
-                
-                <div class="metodo-card">
-                    <h4>🎲 MC Binomial Negativa</h4>
-                    <p>Para datos con sobredispersión (varianza > media). Común en epidemiología.</p>
-                </div>
-                
-                <div class="metodo-card">
-                    <h4>🎲 MC Gamma</h4>
-                    <p>Para datos continuos estrictamente positivos con sesgo hacia la derecha.</p>
-                </div>
-                
-                <div class="metodo-card recomendado">
-                    <h4>⭐ MC Adaptativo (Recomendado)</h4>
-                    <p>Selecciona automáticamente la distribución más apropiada según las características de los datos.</p>
-                </div>
-                
-                <div class="metodo-card recomendado">
-                    <h4>🌟 Versiones Estacionales</h4>
-                    <p>Incluyen ajuste por patrones mensuales históricos. Más precisas para datos con estacionalidad.</p>
+                <div class="method-card">
+                    <h4>🌐 Monte Carlo Adaptativo Estacional</h4>
+                    <p>Incluye ajuste por patrones estacionales mensuales históricos.</p>
                 </div>
             </div>
             
-            <div style="margin-top: 40px; padding: 20px; background: #ecf0f1; border-radius: 5px;">
-                <h3>💡 Cómo Interpretar los Resultados</h3>
-                <ol>
-                    <li><strong>Compare los métodos:</strong> Si hay gran diferencia entre métodos, los datos tienen alta incertidumbre.</li>
-                    <li><strong>Prefiera métodos estacionales:</strong> Si sus datos tienen patrones mensuales conocidos.</li>
-                    <li><strong>Use MC Adaptativo Estacional:</strong> Como mejor estimación general para epidemiología.</li>
-                    <li><strong>Considere intervalos de confianza:</strong> Los métodos Monte Carlo capturan mejor la variabilidad.</li>
-                </ol>
+            <div class="section" style="background: #d5f4e6; padding: 20px; border-radius: 5px;">
+                <h2>✅ Recomendación</h2>
+                <p><strong>Método recomendado: Monte Carlo Adaptativo Estacional</strong></p>
+                <p>Este método combina la flexibilidad de la simulación Monte Carlo con el ajuste estacional, proporcionando las proyecciones más robustas para datos epidemiológicos.</p>
             </div>
         </div>
     </body>
@@ -462,236 +371,239 @@ def generate_html_report(df, out, muN, sdN, muD, sdD, varN, varD, overdispersed_
     return html_content
 
 def main():
-    # Header con información
-    st.title("📊 Simulador Epidemiológico - Proyecciones Online")
+    st.title("📊 Simulador Avanzado de Proyecciones Organizacionales")
     st.markdown("""
-    **Aplicación web para proyecciones epidemiológicas**  
-    Carga un archivo CSV con datos históricos para generar proyecciones de los próximos 3 meses usando múltiples métodos estadísticos.
-    Uselo sólo con fines referenciales.
+    **Sistema completo de proyecciones **  
+    Carga archivos CSV o Excel para generar proyecciones detalladas de los próximos 3 meses.
     """)
-    
-    # Ejemplo de formato
-    with st.expander("📋 ¿Qué formato debe tener el CSV?"):
-        st.markdown("""
-        Tu archivo CSV debe tener estas columnas:
-        
-        | AÑO | MES | NUMERADOR | DENOMINADOR |
-        |-----|-----|-----------|-------------|
-        | 2023 | ENERO | 150 | 1000 |
-        | 2023 | FEBRERO | 120 | 950 |
-        | 2023 | MARZO | 180 | 1100 |
-        
-        **Requisitos:**
-        - Encabezados en español
-        - Meses en mayúsculas (ENERO, FEBRERO, etc.)
-        - Valores numéricos para numerador y denominador
-        """)
     
     # Sidebar
     with st.sidebar:
         st.header("📁 Cargar Datos")
         uploaded_file = st.file_uploader(
             "Selecciona tu archivo de datos", 
-            type=['csv', 'xlsx', 'xls'],  # ✅ Ahora soporta ambos formatos
-            help="Formatos soportados: CSV, Excel (.xlsx, .xls). El archivo debe tener columnas: AÑO, MES, NUMERADOR, DENOMINADOR"
+            type=['csv', 'xlsx', 'xls'],
+            help="Formatos soportados: CSV, Excel (.xlsx, .xls). Columnas requeridas: AÑO, MES, NUMERADOR, DENOMINADOR"
         )
         
         st.markdown("---")
-        st.header("ℹ️ Información")
+        st.header("🔄 Métodos de Proyección")
         st.markdown("""
-        Esta aplicación usa:
-        - **Métodos deterministas**: Promedio, Tendencia Lineal
-        - **Métodos probabilísticos**: Monte Carlo con diferentes distribuciones
-        - **Ajuste estacional**: Patrones mensuales históricos
+        - **📊 Promedio**: Baseline histórico
+        - **📈 Lineal**: Tendencia por regresión  
+        - **🎲 MC Adaptativo**: Simulación probabilística
+        - **🌐 MC Estacional**: Con ajuste mensual
         """)
         
         st.markdown("---")
-        st.markdown("**Desarrollado para análisis epidemiológico**")
-        st.markdown("*Versión 1.0 - Christian Fuentes*")
+        st.header("📈 Resultados Incluyen")
+        st.markdown("""
+        - Porcentajes proyectados
+        - Numeradores estimados
+        - Denominadores estimados
+        - Comparación entre métodos
+        """)
 
     if uploaded_file is not None:
         # Procesar datos
         with st.spinner("Procesando datos..."):
-            df = read_and_trim(uploaded_file)
+            df = read_and_process_file(uploaded_file)
             
             if df is None or len(df) == 0:
-                st.error("No se pudieron procesar los datos. Verifica el formato del archivo.")
+                st.error("No se pudieron procesar los datos.")
                 return
 
             # Mostrar información básica
-            col1, col2, col3 = st.columns(3)
+            st.success(f"✅ {len(df)} registros procesados correctamente")
+            
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Registros procesados", len(df))
+                st.metric("Período", f"{len(df)} meses")
             with col2:
-                st.metric("Período inicial", f"{df['ANIO'].min()}/{df['MES'].iloc[0]}")
+                st.metric("Numerador Prom.", f"{df['NUMERADOR'].mean():.1f}")
             with col3:
-                st.metric("Período final", f"{df['ANIO'].max()}/{df['MES'].iloc[-1]}")
+                st.metric("Denominador Prom.", f"{df['DENOMINADOR'].mean():.1f}")
+            with col4:
+                st.metric("% Histórico", f"{df['pct'].mean():.2%}")
 
-            # Realizar proyecciones
+        # Realizar proyecciones
+        with st.spinner("Calculando proyecciones..."):
             future_months = next_three_months_from_last(df)
-
-            # Métodos deterministas
-            avg_pct = average_method(df)
-            predN_lin = linear_trend_forecast(df["NUMERADOR"], steps=3)
-            predD_lin = linear_trend_forecast(df["DENOMINADOR"], steps=3)
-            lin_pct = predN_lin / predD_lin
-
+            
             # Parámetros globales
             muN, sdN = df["NUMERADOR"].mean(), df["NUMERADOR"].std(ddof=1)
             muD, sdD = df["DENOMINADOR"].mean(), df["DENOMINADOR"].std(ddof=1)
-            varN, varD = df["NUMERADOR"].var(ddof=1), df["DENOMINADOR"].var(ddof=1)
-
+            
             # Índices estacionales
             idxN, idxD = seasonal_indices(df)
-
-            # Detectar sobredispersión
-            overdispersed_N = varN > muN * 1.2
-            overdispersed_D = varD > muD * 1.2
-
-            rows = []
-            for i, m in enumerate(future_months):
-                # Parámetros ajustados estacionalmente
-                muNm = muN * idxN.get(m, 1.0)
-                muDm = muD * idxD.get(m, 1.0)
-                sdNm = sdN * np.sqrt(idxN.get(m, 1.0))
-                sdDm = sdD * np.sqrt(idxD.get(m, 1.0))
-                varNm = varN * idxN.get(m, 1.0)
-                varDm = varD * idxD.get(m, 1.0)
-
-                # Diferentes métodos Monte Carlo
-                mc_poisson = mc_ratio_poisson(muN, muD, seed=SEED+i)
-                mc_poisson_seas = mc_ratio_poisson(muNm, muDm, seed=SEED+100+i)
+            
+            # Método del promedio (constante para los 3 meses)
+            avg_num, avg_den, avg_pct = average_method(df)
+            
+            # Métodos lineales
+            predN_lin = linear_trend_forecast_improved(df["NUMERADOR"], steps=3)
+            predD_lin = linear_trend_forecast_improved(df["DENOMINADOR"], steps=3)
+            
+            # Recolectar resultados
+            results = []
+            
+            for i, month_num in enumerate(future_months):
+                # Parámetros estacionales
+                muNm = muN * idxN.get(month_num, 1.0) if not idxN.empty else muN
+                muDm = muD * idxD.get(month_num, 1.0) if not idxD.empty else muD
+                sdNm = sdN * np.sqrt(idxN.get(month_num, 1.0)) if not idxN.empty else sdN
+                sdDm = sdD * np.sqrt(idxD.get(month_num, 1.0)) if not idxD.empty else sdD
                 
-                mc_negbinom = mc_ratio_negbinom(muN, varN, muD, varD, seed=SEED+200+i)
-                mc_negbinom_seas = mc_ratio_negbinom(muNm, varNm, muDm, varDm, seed=SEED+300+i)
+                # Método lineal
+                lin_num = predN_lin[i]
+                lin_den = predD_lin[i]
+                lin_pct = lin_num / lin_den if lin_den > 0 else 0.0
                 
-                mc_gamma = mc_ratio_gamma(muN, sdN, muD, sdD, seed=SEED+400+i)
-                mc_gamma_seas = mc_ratio_gamma(muNm, sdNm, muDm, sdDm, seed=SEED+500+i)
+                # Métodos Monte Carlo
+                mc_num, mc_den, mc_pct = mc_simulation_adaptive(muN, sdN, muD, sdD, seed=SEED + i*100)
+                mc_seas_num, mc_seas_den, mc_seas_pct = mc_simulation_adaptive(muNm, sdNm, muDm, sdDm, seed=SEED + 1000 + i*100)
                 
-                mc_adaptive = mc_ratio_adaptive(muN, sdN, muD, sdD, seed=SEED+600+i)
-                mc_adaptive_seas = mc_ratio_adaptive(muNm, sdNm, muDm, sdDm, seed=SEED+700+i)
-
-                rows.append({
-                    "Mes": N2M[m],
-                    "Promedio": avg_pct,
-                    "Pronostico_Lineal": lin_pct[i],
-                    "MC_Poisson": mc_poisson,
-                    "MC_Poisson_Estacional": mc_poisson_seas,
-                    "MC_NegBinom": mc_negbinom,
-                    "MC_NegBinom_Estacional": mc_negbinom_seas,
-                    "MC_Gamma": mc_gamma,
-                    "MC_Gamma_Estacional": mc_gamma_seas,
-                    "MC_Adaptativo": mc_adaptive,
-                    "MC_Adaptativo_Estacional": mc_adaptive_seas
+                results.append({
+                    'Mes': N2M[month_num],
+                    # Promedio
+                    'Promedio_num': avg_num,
+                    'Promedio_den': avg_den,
+                    'Promedio_pct': avg_pct,
+                    # Lineal
+                    'Pronostico_Lineal_num': lin_num,
+                    'Pronostico_Lineal_den': lin_den,
+                    'Pronostico_Lineal_pct': lin_pct,
+                    # MC Adaptativo
+                    'MC_Adaptativo_num': mc_num,
+                    'MC_Adaptativo_den': mc_den,
+                    'MC_Adaptativo_pct': mc_pct,
+                    # MC Adaptativo Estacional
+                    'MC_Adaptativo_Estacional_num': mc_seas_num,
+                    'MC_Adaptativo_Estacional_den': mc_seas_den,
+                    'MC_Adaptativo_Estacional_pct': mc_seas_pct
                 })
 
-            out = pd.DataFrame(rows)
-
-        # Mostrar resultados
-        st.success("✅ Proyecciones calculadas exitosamente!")
-        
-        # Pestañas para diferentes vistas
-        tab1, tab2, tab3, tab4 = st.tabs(["📈 Resultados", "📊 Gráfico", "📋 Datos", "🌐 Reporte HTML"])
+        # Mostrar resultados en pestañas
+        tab1, tab2, tab3, tab4 = st.tabs(["📊 Resultados Completos", "📈 Gráficos", "🔢 Datos Detallados", "🌐 Reporte HTML"])
         
         with tab1:
-            st.subheader("Proyecciones para los Próximos 3 Meses")
+            st.subheader("Proyecciones Completas - Todos los Métodos")
             
-            # Formatear tabla para mostrar
-            display_df = out.copy()
-            for col in display_df.columns:
-                if col != "Mes":
-                    display_df[col] = (display_df[col] * 100).round(2).astype(str) + "%"
+            # Crear DataFrame para display
+            display_data = []
+            for result in results:
+                for method in ['Promedio', 'Pronostico_Lineal', 'MC_Adaptativo', 'MC_Adaptativo_Estacional']:
+                    display_data.append({
+                        'Mes': result['Mes'],
+                        'Método': method.replace('_', ' ').title(),
+                        'Numerador': result[f'{method}_num'],
+                        'Denominador': result[f'{method}_den'],
+                        'Porcentaje': f"{result[f'{method}_pct']*100:.2f}%"
+                    })
             
+            display_df = pd.DataFrame(display_data)
             st.dataframe(display_df, use_container_width=True)
             
-            # Método recomendado
-            st.info("""
-            **🎯 Recomendación:** Para datos epidemiológicos, use **MC Adaptativo Estacional** como método principal, 
-            ya que selecciona automáticamente la distribución más apropiada y considera la estacionalidad.
-            """)
-
+            # Resumen de porcentajes
+            st.subheader("Resumen de Porcentajes por Método")
+            pct_summary = pd.DataFrame({
+                'Mes': [r['Mes'] for r in results],
+                'Promedio': [f"{r['Promedio_pct']*100:.2f}%" for r in results],
+                'Pronóstico Lineal': [f"{r['Pronostico_Lineal_pct']*100:.2f}%" for r in results],
+                'MC Adaptativo': [f"{r['MC_Adaptativo_pct']*100:.2f}%" for r in results],
+                'MC Adaptativo Estacional': [f"{r['MC_Adaptativo_Estacional_pct']*100:.2f}%" for r in results]
+            })
+            st.dataframe(pct_summary, use_container_width=True)
+        
         with tab2:
-            st.subheader("Comparación de Métodos")
+            st.subheader("Comparación Gráfica de Métodos")
             
-            methods_to_plot = [
-                "Promedio",
-                "Pronostico_Lineal", 
-                "MC_Adaptativo_Estacional",
-                "MC_Poisson_Estacional",
-                "MC_Gamma_Estacional"
-            ]
+            # Gráfico de porcentajes
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
             
-            labels_plot = [
-                "Promedio",
-                "Tendencia Lineal",
-                "MC Adaptativo (Recomendado)",
-                "MC Poisson",
-                "MC Gamma"
-            ]
-
-            fig, ax = plt.subplots(figsize=(12, 6))
-            x = np.arange(len(out))
-            width = 0.15
+            # Gráfico 1: Porcentajes
+            methods = ['Promedio', 'Pronostico_Lineal', 'MC_Adaptativo', 'MC_Adaptativo_Estacional']
+            labels = ['Promedio', 'Lineal', 'MC Adaptativo', 'MC Estacional']
+            colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
             
-            for j, (mth, label) in enumerate(zip(methods_to_plot, labels_plot)):
-                offset = (j - 2) * width
-                bars = ax.bar(x + offset, out[mth].values * 100.0, width, label=label)
+            x = np.arange(len(results))
+            width = 0.2
+            
+            for i, (method, label, color) in enumerate(zip(methods, labels, colors)):
+                percentages = [r[f'{method}_pct'] * 100 for r in results]
+                ax1.bar(x + (i-1.5)*width, percentages, width, label=label, color=color, alpha=0.8)
                 
-                for xi, val in zip(x + offset, out[mth].values * 100.0):
-                    ax.text(xi, val + 0.5, f"{val:.1f}%", ha="center", va="bottom", fontsize=8)
+                for j, pct in enumerate(percentages):
+                    ax1.text(x[j] + (i-1.5)*width, pct + 0.5, f'{pct:.1f}%', 
+                            ha='center', va='bottom', fontsize=8)
             
-            ax.set_xticks(x)
-            ax.set_xticklabels(out["Mes"])
-            ax.set_ylabel("Porcentaje (%)")
-            ax.set_title("Proyecciones por Método (Próximos 3 Meses)")
-            ax.legend(loc='upper left', fontsize=9)
-            ax.grid(axis="y", alpha=0.3)
+            ax1.set_xticks(x)
+            ax1.set_xticklabels([r['Mes'] for r in results])
+            ax1.set_ylabel('Porcentaje (%)')
+            ax1.set_title('Comparación de Porcentajes por Método')
+            ax1.legend()
+            ax1.grid(axis='y', alpha=0.3)
             
+            # Gráfico 2: Numeradores
+            for i, (method, label, color) in enumerate(zip(methods, labels, colors)):
+                numerators = [r[f'{method}_num'] for r in results]
+                ax2.bar(x + (i-1.5)*width, numerators, width, label=label, color=color, alpha=0.8)
+            
+            ax2.set_xticks(x)
+            ax2.set_xticklabels([r['Mes'] for r in results])
+            ax2.set_ylabel('Numerador')
+            ax2.set_title('Comparación de Numeradores por Método')
+            ax2.legend()
+            ax2.grid(axis='y', alpha=0.3)
+            
+            plt.tight_layout()
             st.pyplot(fig)
-
+        
         with tab3:
-            st.subheader("Datos Procesados")
+            st.subheader("Datos de Entrada Procesados")
             st.dataframe(df, use_container_width=True)
             
-            # Estadísticas
+            # Estadísticas descriptivas
+            st.subheader("Estadísticas Descriptivas")
             col1, col2 = st.columns(2)
+            
             with col1:
-                st.metric("Numerador - Media", f"{muN:.2f}")
-                st.metric("Numerador - Desviación", f"{sdN:.2f}")
-                st.metric("Sobredispersión N", "Sí" if overdispersed_N else "No")
+                st.write("**Numerador**")
+                st.write(df['NUMERADOR'].describe())
+            
             with col2:
-                st.metric("Denominador - Media", f"{muD:.2f}")
-                st.metric("Denominador - Desviación", f"{sdD:.2f}")
-                st.metric("Sobredispersión D", "Sí" if overdispersed_D else "No")
-
+                st.write("**Denominador**")
+                st.write(df['DENOMINADOR'].describe())
+        
         with tab4:
             st.subheader("Reporte HTML Completo")
             
-            # Generar HTML
-            html_content = generate_html_report(
-                df, out, muN, sdN, muD, sdD, varN, varD, 
-                overdispersed_N, overdispersed_D
-            )
+            # Generar y mostrar reporte HTML
+            html_content = generate_comprehensive_report(df, results)
+            st.components.v1.html(html_content, height=1000, scrolling=True)
             
-            # Mostrar vista previa del HTML
-            st.components.v1.html(html_content, height=800, scrolling=True)
+            # Botones de descarga
+            col1, col2 = st.columns(2)
             
-            # Descargar HTML
-            st.download_button(
-                label="📥 Descargar Reporte HTML",
-                data=html_content,
-                file_name="reporte_proyecciones.html",
-                mime="text/html"
-            )
+            with col1:
+                # Descargar HTML
+                st.download_button(
+                    label="📥 Descargar Reporte HTML",
+                    data=html_content,
+                    file_name="reporte_proyecciones_completo.html",
+                    mime="text/html"
+                )
             
-            # Descargar CSV con resultados
-            csv = out.to_csv(index=False, encoding='utf-8-sig')
-            st.download_button(
-                label="📥 Descargar Resultados CSV",
-                data=csv,
-                file_name="proyecciones.csv",
-                mime="text/csv"
-            )
+            with col2:
+                # Descargar CSV con resultados
+                results_csv = pd.DataFrame(results)
+                csv_data = results_csv.to_csv(index=False, encoding='utf-8-sig')
+                st.download_button(
+                    label="📊 Descargar Resultados CSV",
+                    data=csv_data,
+                    file_name="resultados_proyecciones.csv",
+                    mime="text/csv"
+                )
 
 if __name__ == "__main__":
     main()
