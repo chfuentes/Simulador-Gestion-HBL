@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -7,6 +6,7 @@ from sklearn.linear_model import LinearRegression
 import io
 import base64
 import warnings
+from openpyxl import Workbook  # ✅ AGREGAR ESTA IMPORTACIÓN
 warnings.filterwarnings('ignore')
 
 # Configuración optimizada para producción
@@ -491,74 +491,48 @@ def get_next_period(df, period_type):
             'año': next_year
         }
 
-    #Simulacion de porcentaje
-    # Agregar esta función después de las otras funciones de simulación
-
+#Simulacion de porcentaje
+# Agregar esta función después de las otras funciones de simulación
 def simulate_target_percentage(df, target_pct):
     """
     Simula numeradores y denominadores necesarios para alcanzar un porcentaje objetivo
-    usando los diferentes métodos de proyección
     """
     # Parámetros globales
     muN, sdN = df["NUMERADOR"].mean(), df["NUMERADOR"].std(ddof=1)
     muD, sdD = df["DENOMINADOR"].mean(), df["DENOMINADOR"].std(ddof=1)
     
-    # Obtener el próximo período según la periodicidad detectada
-    # Detectar periodicidad
-    periodo_info = detect_periodicity(df)
-    st.info(f"📅 **Periodicidad detectada:** {periodo_info['tipo'].upper()} (confianza: {periodo_info['confianza']})")
-
-    if periodo_info['tipo'] == 'irregular':
-        st.error("""
-        ❌ **No se pudo detectar una periodicidad clara en los datos.**
-        
-        **Posibles causas:**
-        - Meses faltantes en la serie temporal
-        - Mezcla de diferentes periodicidades
-        - Datos inconsistentes
-        
-        **Solución:** Asegúrate de que los datos tengan una periodicidad consistente (mensual, trimestral o semestral).
-        """)
-    # Puedes decidir si continuar o no
-
-    next_period = get_next_period(df, periodo_info['tipo'])
-    period_name = next_period['nombre']
+    # Obtener el próximo mes
+    future_month = next_three_months_from_last(df)[0]
+    month_name = N2M[future_month]
     
-    # Índices estacionales (solo para periodicidad mensual)
-    idxN, idxD = seasonal_indices(df) if periodo_info['tipo'] == 'mensual' else (pd.Series(), pd.Series())
+    # Índices estacionales
+    idxN, idxD = seasonal_indices(df)
     
     # Método 1: Promedio - usar promedio mensual histórico
     avg_num, avg_den, avg_pct = average_method(df)
-    target_avg_num = round(target_pct * avg_den)
-    target_avg_den = round(avg_den)
+    target_avg_num = max(0, round(target_pct * avg_den))  # Redondear y evitar negativos
+    target_avg_den = max(1, round(avg_den))  # Al menos 1
     
     # Método 2: Lineal - proyectar y redondear
     predN_lin = linear_trend_forecast_improved(df["NUMERADOR"], steps=1)[0]
     predD_lin = linear_trend_forecast_improved(df["DENOMINADOR"], steps=1)[0]
-    target_lin_num = round(target_pct * predD_lin)
-    target_lin_den = round(predD_lin)
+    target_lin_num = max(0, round(target_pct * predD_lin))
+    target_lin_den = max(1, round(predD_lin))
     
     # Método 3: MC Adaptativo - redondear resultados
     mc_num, mc_den, mc_pct = mc_simulation_adaptive(muN, sdN, muD, sdD, seed=SEED)
-    target_mc_num = round(target_pct * mc_den)
-    target_mc_den = round(mc_den)
+    target_mc_num = max(0, round(target_pct * mc_den))
+    target_mc_den = max(1, round(mc_den))
     
-    # Método 4: MC Estacional (solo para mensual)
-    if not idxN.empty and periodo_info['tipo'] == 'mensual':
-        future_month = next_period['mes_num'] if 'mes_num' in next_period else 1
-        muNm = muN * idxN.get(future_month, 1.0)
-        muDm = muD * idxD.get(future_month, 1.0)
-        mc_seas_num, mc_seas_den, mc_seas_pct = mc_simulation_adaptive(muNm, sdN, muDm, sdD, seed=SEED + 1000)
-        target_mc_seas_num = round(target_pct * mc_seas_den)
-        target_mc_seas_den = round(mc_seas_den)
-    else:
-        # Para trimestral/semestral, usar MC normal
-        target_mc_seas_num = target_mc_num
-        target_mc_seas_den = target_mc_den
+    # Método 4: MC Estacional
+    muNm = muN * idxN.get(future_month, 1.0) if not idxN.empty else muN
+    muDm = muD * idxD.get(future_month, 1.0) if not idxD.empty else muD
+    mc_seas_num, mc_seas_den, mc_seas_pct = mc_simulation_adaptive(muNm, sdN, muDm, sdD, seed=SEED + 1000)
+    target_mc_seas_num = max(0, round(target_pct * mc_seas_den))
+    target_mc_seas_den = max(1, round(mc_seas_den))
     
     return {
-        'Periodo': period_name,
-        'Tipo_Periodo': periodo_info['tipo'],
+        'Mes': month_name,
         'Porcentaje_Objetivo': target_pct,
         # Promedio
         'Promedio_num': target_avg_num,
@@ -697,6 +671,7 @@ def main():
     """)
     
     # Sidebar
+    # En la función main(), dentro del with st.sidebar:
     with st.sidebar:
         st.header("📁 Cargar Datos")
         uploaded_file = st.file_uploader(
@@ -704,46 +679,112 @@ def main():
             type=['csv', 'xlsx', 'xls'],
             help="Formatos soportados: CSV, Excel (.xlsx, .xls). Columnas requeridas: AÑO, MES, NUMERADOR, DENOMINADOR"
         )
+        
         st.markdown("---")
         st.header("📋 Plantillas")
-               
+        
+        # Plantilla para CSV
+        st.subheader("📄 Plantilla CSV")
+        
+        # Crear datos de ejemplo para la plantilla (DEFINIR template_df ANTES de usarlo)
+        template_data = {
+            'AÑO': [2024, 2024, 2024, 2024, 2024, 2024],
+            'MES': ['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO'],
+            'NUMERADOR': [150, 120, 180, 160, 140, 170],
+            'DENOMINADOR': [1000, 950, 1100, 1050, 980, 1200]
+        }
+        
+        template_df = pd.DataFrame(template_data)
+        
+        # Convertir a CSV
+        csv_template = template_df.to_csv(index=False, sep=';', encoding='utf-8-sig')
+        
+        st.download_button(
+            label="📥 Descargar Plantilla CSV",
+            data=csv_template,
+            file_name="plantilla_prisma.csv",
+            mime="text/csv",
+            help="Plantilla en formato CSV con separador punto y coma"
+        )
+        
         # Plantilla para Excel
         st.subheader("📊 Plantilla Excel")
         
-        # Crear archivo Excel en memoria
-        excel_buffer = io.BytesIO()
-        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-            template_df.to_excel(writer, sheet_name='Datos', index=False)
+        # Crear archivo Excel en memoria con manejo de errores
+        try:
+            excel_buffer = io.BytesIO()
             
-            # Agregar hoja de instrucciones
-            instructions_data = {
-                'Instrucción': [
-                    'Formato requerido',
-                    'Columnas obligatorias',
-                    'Formato de meses',
-                    'Valores numéricos',
-                    'Recomendaciones'
-                ],
-                'Descripción': [
-                    'Archivo CSV o Excel con las columnas especificadas',
-                    'AÑO, MES, NUMERADOR, DENOMINADOR (en español)',
-                    'Nombres completos en MAYÚSCULAS: ENERO, FEBRERO, etc.',
-                    'Solo números enteros o decimales, sin símbolos',
-                    'Mínimo 6 meses de datos para mejores proyecciones'
-                ]
-            }
-            instructions_df = pd.DataFrame(instructions_data)
-            instructions_df.to_excel(writer, sheet_name='Instrucciones', index=False)
-        
-        excel_buffer.seek(0)
-        
-        st.download_button(
-            label="📥 Descargar Plantilla Excel",
-            data=excel_buffer,
-            file_name="plantilla_prisma.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            help="Plantilla en formato Excel con hojas de datos e instrucciones"
-        )
+            # Crear workbook desde cero en lugar de usar pd.ExcelWriter
+            from openpyxl import Workbook
+            wb = Workbook()
+            
+            # Remover la hoja por defecto
+            wb.remove(wb.active)
+            
+            # Crear hoja de datos
+            ws_data = wb.create_sheet("Datos_Ejemplo")
+            
+            # Escribir encabezados
+            headers = ['AÑO', 'MES', 'NUMERADOR', 'DENOMINADOR']
+            for col, header in enumerate(headers, 1):
+                ws_data.cell(row=1, column=col, value=header)
+            
+            # Escribir datos de ejemplo
+            for row, (_, data_row) in enumerate(template_df.iterrows(), 2):
+                ws_data.cell(row=row, column=1, value=data_row['AÑO'])
+                ws_data.cell(row=row, column=2, value=data_row['MES'])
+                ws_data.cell(row=row, column=3, value=data_row['NUMERADOR'])
+                ws_data.cell(row=row, column=4, value=data_row['DENOMINADOR'])
+            
+            # Crear hoja de instrucciones
+            ws_instructions = wb.create_sheet("Instrucciones")
+            
+            instructions_data = [
+                ['Campo', 'Descripción', 'Ejemplo', 'Requerido'],
+                ['AÑO', 'Año del registro', '2024, 2025', 'Sí'],
+                ['MES', 'Nombre del mes en español en MAYÚSCULAS', 'ENERO, FEBRERO, MARZO', 'Sí'],
+                ['NUMERADOR', 'Cantidad de casos/eventos (número)', '150, 120.5', 'Sí'],
+                ['DENOMINADOR', 'Población/total (número)', '1000, 950.5', 'Sí'],
+                ['', '', '', ''],
+                ['Recomendaciones:', '', '', ''],
+                ['- Mínimo 6 meses de datos', '', '', ''],
+                ['- No incluir columna de porcentaje (%)', '', '', ''],
+                ['- Formato consistente en todos los registros', '', '', '']
+            ]
+            
+            for row, instruction_row in enumerate(instructions_data, 1):
+                for col, value in enumerate(instruction_row, 1):
+                    ws_instructions.cell(row=row, column=col, value=value)
+            
+            # Establecer la primera hoja como activa
+            wb.active = ws_data
+            
+            # Guardar workbook en el buffer
+            wb.save(excel_buffer)
+            excel_buffer.seek(0)
+            
+            st.download_button(
+                label="📥 Descargar Plantilla Excel",
+                data=excel_buffer,
+                file_name="plantilla_prisma.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                help="Plantilla en formato Excel con hojas de datos e instrucciones"
+            )
+            
+        except Exception as e:
+            st.error(f"Error al crear plantilla Excel: {e}")
+            # Ofrecer alternativa simple
+            simple_excel_buffer = io.BytesIO()
+            template_df.to_excel(simple_excel_buffer, index=False, engine='openpyxl')
+            simple_excel_buffer.seek(0)
+            
+            st.download_button(
+                label="📥 Descargar Plantilla Simple Excel",
+                data=simple_excel_buffer,
+                file_name="plantilla_prisma_simple.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                help="Plantilla básica en formato Excel"
+            )
         
         # Información sobre el formato
         with st.expander("ℹ️ Instrucciones de formato"):
@@ -772,6 +813,7 @@ def main():
             """)
         
         st.markdown("---")
+        # ... el resto del sidebar permanece igual
         st.header("🔄 Métodos de Proyección")
         st.markdown("""
         - **📊 Promedio**: Baseline histórico
