@@ -370,6 +370,182 @@ def generate_comprehensive_report(df, results):
     
     return html_content
 
+    #Simulacion de porcentaje
+    # Agregar esta función después de las otras funciones de simulación
+
+def simulate_target_percentage(df, target_pct):
+    """
+    Simula numeradores y denominadores necesarios para alcanzar un porcentaje objetivo
+    usando los diferentes métodos de proyección
+    """
+    # Parámetros globales
+    muN, sdN = df["NUMERADOR"].mean(), df["NUMERADOR"].std(ddof=1)
+    muD, sdD = df["DENOMINADOR"].mean(), df["DENOMINADOR"].std(ddof=1)
+    
+    # Obtener el próximo mes
+    future_month = next_three_months_from_last(df)[0]
+    month_name = N2M[future_month]
+    
+    # Índices estacionales
+    idxN, idxD = seasonal_indices(df)
+    
+    # Parámetros estacionales
+    muNm = muN * idxN.get(future_month, 1.0) if not idxN.empty else muN
+    muDm = muD * idxD.get(future_month, 1.0) if not idxD.empty else muD
+    
+    # Método 1: Promedio - mantener denominador histórico, ajustar numerador
+    avg_num, avg_den, avg_pct = average_method(df)
+    target_avg_num = target_pct * avg_den
+    target_avg_den = avg_den  # Mantener denominador histórico
+    
+    # Método 2: Lineal - proyectar denominador y calcular numerador necesario
+    predN_lin = linear_trend_forecast_improved(df["NUMERADOR"], steps=1)[0]
+    predD_lin = linear_trend_forecast_improved(df["DENOMINADOR"], steps=1)[0]
+    target_lin_num = target_pct * predD_lin
+    target_lin_den = predD_lin
+    
+    # Método 3: MC Adaptativo - usar distribución del denominador y calcular numerador
+    mc_num, mc_den, mc_pct = mc_simulation_adaptive(muN, sdN, muD, sdD, seed=SEED)
+    target_mc_num = target_pct * mc_den
+    target_mc_den = mc_den
+    
+    # Método 4: MC Estacional - usar distribución estacional del denominador
+    mc_seas_num, mc_seas_den, mc_seas_pct = mc_simulation_adaptive(muNm, sdN, muDm, sdD, seed=SEED + 1000)
+    target_mc_seas_num = target_pct * mc_seas_den
+    target_mc_seas_den = mc_seas_den
+    
+    return {
+        'Mes': month_name,
+        'Porcentaje_Objetivo': target_pct,
+        # Promedio
+        'Promedio_num': target_avg_num,
+        'Promedio_den': target_avg_den,
+        'Promedio_pct': target_pct,
+        # Lineal
+        'Pronostico_Lineal_num': target_lin_num,
+        'Pronostico_Lineal_den': target_lin_den,
+        'Pronostico_Lineal_pct': target_pct,
+        # MC Adaptativo
+        'MC_Adaptativo_num': target_mc_num,
+        'MC_Adaptativo_den': target_mc_den,
+        'MC_Adaptativo_pct': target_pct,
+        # MC Adaptativo Estacional
+        'MC_Adaptativo_Estacional_num': target_mc_seas_num,
+        'MC_Adaptativo_Estacional_den': target_mc_seas_den,
+        'MC_Adaptativo_Estacional_pct': target_pct
+    }
+
+def generate_simulation_report(df, simulation_results):
+    """Genera reporte HTML para la simulación de metas"""
+    
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Simulación de Meta - PRISMA</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }}
+            .container {{ max-width: 100%; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; }}
+            h1 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }}
+            h2 {{ color: #34495e; margin-top: 30px; }}
+            .table-wrapper {{ overflow-x: auto; margin: 20px 0; }}
+            table {{ width: 100%; border-collapse: collapse; font-size: 12px; }}
+            th, td {{ padding: 8px; text-align: center; border: 1px solid #ddd; }}
+            th {{ background: #3498db; color: white; }}
+            .section {{ margin: 30px 0; }}
+            .method-card {{ background: #f8f9fa; padding: 15px; margin: 10px 0; border-left: 4px solid #3498db; }}
+            .highlight {{ background: #e8f4f8; }}
+            .target-info {{ background: #d5f4e6; padding: 20px; border-radius: 5px; margin: 20px 0; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🎯 Simulación de Meta - PRISMA</h1>
+            
+            <div class="target-info">
+                <h2>📋 Información de la Meta</h2>
+                <p><strong>Mes objetivo:</strong> {simulation_results['Mes']}</p>
+                <p><strong>Porcentaje deseado:</strong> {simulation_results['Porcentaje_Objetivo']*100:.2f}%</p>
+                <p><strong>Interpretación:</strong> Esta simulación muestra los valores de numerador y denominador necesarios para alcanzar la meta del {simulation_results['Porcentaje_Objetivo']*100:.2f}% según cada método de proyección.</p>
+            </div>
+
+            <div class="section">
+                <h2>📊 Valores Requeridos por Método</h2>
+                <table>
+                    <tr>
+                        <th>Método</th>
+                        <th>Numerador Requerido</th>
+                        <th>Denominador Proyectado</th>
+                        <th>Porcentaje Resultante</th>
+                        <th>Diferencia Numérica</th>
+                    </tr>
+                    <tr>
+                        <td><strong>Promedio</strong></td>
+                        <td>{simulation_results['Promedio_num']:.1f}</td>
+                        <td>{simulation_results['Promedio_den']:.1f}</td>
+                        <td><strong>{simulation_results['Promedio_pct']*100:.2f}%</strong></td>
+                        <td>{simulation_results['Promedio_num'] - df['NUMERADOR'].mean():.1f}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Pronóstico Lineal</strong></td>
+                        <td>{simulation_results['Pronostico_Lineal_num']:.1f}</td>
+                        <td>{simulation_results['Pronostico_Lineal_den']:.1f}</td>
+                        <td><strong>{simulation_results['Pronostico_Lineal_pct']*100:.2f}%</strong></td>
+                        <td>{simulation_results['Pronostico_Lineal_num'] - df['NUMERADOR'].mean():.1f}</td>
+                    </tr>
+                    <tr class="highlight">
+                        <td><strong>MC Adaptativo</strong></td>
+                        <td>{simulation_results['MC_Adaptativo_num']:.1f}</td>
+                        <td>{simulation_results['MC_Adaptativo_den']:.1f}</td>
+                        <td><strong>{simulation_results['MC_Adaptativo_pct']*100:.2f}%</strong></td>
+                        <td>{simulation_results['MC_Adaptativo_num'] - df['NUMERADOR'].mean():.1f}</td>
+                    </tr>
+                    <tr class="highlight">
+                        <td><strong>MC Adaptativo Estacional</strong></td>
+                        <td>{simulation_results['MC_Adaptativo_Estacional_num']:.1f}</td>
+                        <td>{simulation_results['MC_Adaptativo_Estacional_den']:.1f}</td>
+                        <td><strong>{simulation_results['MC_Adaptativo_Estacional_pct']*100:.2f}%</strong></td>
+                        <td>{simulation_results['MC_Adaptativo_Estacional_num'] - df['NUMERADOR'].mean():.1f}</td>
+                    </tr>
+                </table>
+            </div>
+
+            <div class="section">
+                <h2>💡 Recomendaciones por Método</h2>
+                <div class="method-card">
+                    <h4>📊 Promedio</h4>
+                    <p>Para alcanzar el {simulation_results['Porcentaje_Objetivo']*100:.2f}%, necesitarías <strong>{simulation_results['Promedio_num']:.1f} eventos</strong> manteniendo el denominador histórico de {simulation_results['Promedio_den']:.1f}.</p>
+                </div>
+                <div class="method-card">
+                    <h4>📈 Pronóstico Lineal</h4>
+                    <p>Considerando la tendencia, necesitarías <strong>{simulation_results['Pronostico_Lineal_num']:.1f} eventos</strong> con un denominador proyectado de {simulation_results['Pronostico_Lineal_den']:.1f}.</p>
+                </div>
+                <div class="method-card highlight">
+                    <h4>🎲 MC Adaptativo (Recomendado)</h4>
+                    <p>Basado en la variabilidad histórica, se necesitan <strong>{simulation_results['MC_Adaptativo_num']:.1f} eventos</strong> con un denominador estimado de {simulation_results['MC_Adaptativo_den']:.1f}.</p>
+                </div>
+                <div class="method-card highlight">
+                    <h4>🌐 MC Adaptativo Estacional</h4>
+                    <p>Considerando patrones mensuales, se requieren <strong>{simulation_results['MC_Adaptativo_Estacional_num']:.1f} eventos</strong> con denominador de {simulation_results['MC_Adaptativo_Estacional_den']:.1f}.</p>
+                </div>
+            </div>
+
+            <div class="section" style="background: #e8f4f8; padding: 20px; border-radius: 5px;">
+                <h2>📈 Resumen Ejecutivo</h2>
+                <p><strong>Meta:</strong> {simulation_results['Porcentaje_Objetivo']*100:.2f}% en {simulation_results['Mes']}</p>
+                <p><strong>Rango de numeradores requeridos:</strong> {min([simulation_results['Promedio_num'], simulation_results['Pronostico_Lineal_num'], simulation_results['MC_Adaptativo_num'], simulation_results['MC_Adaptativo_Estacional_num']]):.1f} - {max([simulation_results['Promedio_num'], simulation_results['Pronostico_Lineal_num'], simulation_results['MC_Adaptativo_num'], simulation_results['MC_Adaptativo_Estacional_num']]):.1f} eventos</p>
+                <p><strong>Recomendación principal:</strong> Planificar para <strong>{simulation_results['MC_Adaptativo_Estacional_num']:.1f} eventos</strong> (método MC Estacional)</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    
+    return html_content
+
+
 def main():
     st.title("📊 PRISMA - Proyección y Simulación para Metas COMGES")
     st.markdown("""
@@ -385,6 +561,96 @@ def main():
             type=['csv', 'xlsx', 'xls'],
             help="Formatos soportados: CSV, Excel (.xlsx, .xls). Columnas requeridas: AÑO, MES, NUMERADOR, DENOMINADOR"
         )
+        st.markdown("---")
+        st.header("📋 Plantillas")
+        
+        # Plantilla para CSV
+        st.subheader("📄 Plantilla CSV")
+        
+        # Crear datos de ejemplo para la plantilla
+        template_data = {
+            'AÑO': [2024, 2024, 2024, 2024, 2024, 2024],
+            'MES': ['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO'],
+            'NUMERADOR': [150, 120, 180, 160, 140, 170],
+            'DENOMINADOR': [1000, 950, 1100, 1050, 980, 1200]
+        }
+        
+        template_df = pd.DataFrame(template_data)
+        
+        # Convertir a CSV
+        csv_template = template_df.to_csv(index=False, sep=';', encoding='utf-8-sig')
+        
+        st.download_button(
+            label="📥 Descargar Plantilla CSV",
+            data=csv_template,
+            file_name="plantilla_prisma.csv",
+            mime="text/csv",
+            help="Plantilla en formato CSV con separador punto y coma"
+        )
+        
+        # Plantilla para Excel
+        st.subheader("📊 Plantilla Excel")
+        
+        # Crear archivo Excel en memoria
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+            template_df.to_excel(writer, sheet_name='Datos', index=False)
+            
+            # Agregar hoja de instrucciones
+            instructions_data = {
+                'Instrucción': [
+                    'Formato requerido',
+                    'Columnas obligatorias',
+                    'Formato de meses',
+                    'Valores numéricos',
+                    'Recomendaciones'
+                ],
+                'Descripción': [
+                    'Archivo CSV o Excel con las columnas especificadas',
+                    'AÑO, MES, NUMERADOR, DENOMINADOR (en español)',
+                    'Nombres completos en MAYÚSCULAS: ENERO, FEBRERO, etc.',
+                    'Solo números enteros o decimales, sin símbolos',
+                    'Mínimo 6 meses de datos para mejores proyecciones'
+                ]
+            }
+            instructions_df = pd.DataFrame(instructions_data)
+            instructions_df.to_excel(writer, sheet_name='Instrucciones', index=False)
+        
+        excel_buffer.seek(0)
+        
+        st.download_button(
+            label="📥 Descargar Plantilla Excel",
+            data=excel_buffer,
+            file_name="plantilla_prisma.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="Plantilla en formato Excel con hojas de datos e instrucciones"
+        )
+        
+        # Información sobre el formato
+        with st.expander("ℹ️ Instrucciones de formato"):
+            st.markdown("""
+            **📝 Formato requerido para los archivos:**
+            
+            **Columnas obligatorias:**
+            - `AÑO`: Año del registro (ej: 2024)
+            - `MES`: Nombre del mes en español (ej: ENERO, FEBRERO)
+            - `NUMERADOR`: Valor numérico (ej: casos, eventos)
+            - `DENOMINADOR`: Valor numérico (ej: población, total)
+            
+            **📋 Ejemplo de datos:**
+            ```
+            AÑO;MES;NUMERADOR;DENOMINADOR
+            2024;ENERO;150;1000
+            2024;FEBRERO;120;950
+            2024;MARZO;180;1100
+            ```
+            
+            **✅ Recomendaciones:**
+            - Mínimo 6 meses de datos históricos
+            - Meses en MAYÚSCULAS y nombres completos
+            - Sin caracteres especiales en los números
+            - No incluir la columna de porcentaje (%)
+            """)
         
         st.markdown("---")
         st.header("🔄 Métodos de Proyección")
@@ -482,8 +748,8 @@ def main():
                 })
 
         # Mostrar resultados en pestañas
-        tab1, tab2, tab3, tab4 = st.tabs(["📊 Resultados Completos", "📈 Gráficos", "🔢 Datos Detallados", "🌐 Reporte HTML"])
-        
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Resultados Completos", "📈 Gráficos", "🔢 Datos Detallados", "🌐 Reporte HTML", "🎯 Simulador de Metas"])
+
         with tab1:
             st.subheader("Proyecciones Completas - Todos los Métodos")
             
@@ -623,6 +889,173 @@ def main():
                     file_name="resultados_proyecciones.csv",
                     mime="text/csv"
                 )
+        
+        with tab5:
+            st.subheader("🎯 Simulador de Metas")
+            st.markdown("""
+            **Establece un porcentaje objetivo y descubre los valores necesarios para alcanzarlo**  
+            Esta herramienta calcula los numeradores y denominadores requeridos según diferentes métodos de proyección.
+            """)
+            
+            # Input del usuario
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                target_percentage = st.slider(
+                    "Porcentaje objetivo deseado:",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=5.0,
+                    step=0.1,
+                    format="%.1f%%",
+                    help="Selecciona el porcentaje de cumplimiento que deseas alcanzar"
+                ) / 100.0  # Convertir a decimal
+            
+            with col2:
+                st.metric("Meta establecida", f"{target_percentage*100:.1f}%")
+            
+            # Información contextual
+            current_avg = df['pct'].mean() * 100
+            st.info(f"📊 **Contexto histórico:** El porcentaje promedio actual es del {current_avg:.2f}%")
+            
+            if st.button("🚀 Calcular Valores Requeridos", type="primary"):
+                with st.spinner("Calculando valores necesarios..."):
+                    # Ejecutar simulación
+                    simulation_results = simulate_target_percentage(df, target_percentage)
+                    
+                    # Mostrar resultados principales
+                    st.success("✅ Simulación completada")
+                    
+                    # Métricas principales
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("Mes Objetivo", simulation_results['Mes'])
+                    with col2:
+                        st.metric("Meta", f"{target_percentage*100:.1f}%")
+                    with col3:
+                        min_num = min([simulation_results['Promedio_num'], 
+                                    simulation_results['Pronostico_Lineal_num'],
+                                    simulation_results['MC_Adaptativo_num'],
+                                    simulation_results['MC_Adaptativo_Estacional_num']])
+                        st.metric("Mín. Numerador", f"{min_num:.1f}")
+                    with col4:
+                        max_num = max([simulation_results['Promedio_num'], 
+                                    simulation_results['Pronostico_Lineal_num'],
+                                    simulation_results['MC_Adaptativo_num'],
+                                    simulation_results['MC_Adaptativo_Estacional_num']])
+                        st.metric("Máx. Numerador", f"{max_num:.1f}")
+                    
+                    # Tabla de resultados
+                    st.subheader("📋 Valores Requeridos por Método")
+                    
+                    simulation_data = []
+                    methods = ['Promedio', 'Pronostico_Lineal', 'MC_Adaptativo', 'MC_Adaptativo_Estacional']
+                    labels = ['Promedio', 'Lineal', 'MC Adaptativo', 'MC Estacional']
+                    
+                    for method, label in zip(methods, labels):
+                        simulation_data.append({
+                            'Método': label,
+                            'Numerador Requerido': f"{simulation_results[f'{method}_num']:.1f}",
+                            'Denominador Proyectado': f"{simulation_results[f'{method}_den']:.1f}",
+                            'Porcentaje': f"{simulation_results[f'{method}_pct']*100:.2f}%",
+                            'Incremento vs Promedio': f"{(simulation_results[f'{method}_num'] - df['NUMERADOR'].mean()):.1f}"
+                        })
+                    
+                    simulation_df = pd.DataFrame(simulation_data)
+                    st.dataframe(simulation_df, use_container_width=True, hide_index=True)
+                    
+                    # Gráfico comparativo
+                    st.subheader("📈 Comparación de Numeradores Requeridos")
+                    
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    methods = ['Promedio', 'Pronostico_Lineal', 'MC_Adaptativo', 'MC_Adaptativo_Estacional']
+                    labels = ['Promedio', 'Lineal', 'MC Adaptativo', 'MC Estacional']
+                    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+                    
+                    x = np.arange(len(methods))
+                    numerators = [simulation_results[f'{method}_num'] for method in methods]
+                    
+                    bars = ax.bar(x, numerators, color=colors, alpha=0.8)
+                    
+                    # Línea del promedio histórico
+                    historical_avg = df['NUMERADOR'].mean()
+                    ax.axhline(y=historical_avg, color='red', linestyle='--', linewidth=2, 
+                            label=f'Promedio histórico: {historical_avg:.1f}')
+                    
+                    # Etiquetas en las barras
+                    for i, (bar, num) in enumerate(zip(bars, numerators)):
+                        ax.text(bar.get_x() + bar.get_width()/2, num + max(numerators)*0.01, 
+                            f'{num:.1f}', ha='center', va='bottom', fontsize=11, fontweight='bold')
+                    
+                    ax.set_xticks(x)
+                    ax.set_xticklabels(labels)
+                    ax.set_ylabel('Numerador Requerido')
+                    ax.set_title(f'Numeradores Necesarios para Alcanzar {target_percentage*100:.1f}%')
+                    ax.legend()
+                    ax.grid(axis='y', alpha=0.3)
+                    
+                    st.pyplot(fig)
+                    
+                    # Análisis de brecha
+                    st.subheader("🔍 Análisis de Brecha")
+                    current_avg_num = df['NUMERADOR'].mean()
+                    recommended_num = simulation_results['MC_Adaptativo_Estacional_num']
+                    gap = recommended_num - current_avg_num
+                    
+                    if gap > 0:
+                        st.warning(f"📈 **Necesitas incrementar** en aproximadamente {gap:.1f} eventos respecto al promedio histórico")
+                    else:
+                        st.success(f"📉 **Estás por encima de la meta** por aproximadamente {abs(gap):.1f} eventos")
+                    
+                    # Reporte HTML para descargar
+                    st.subheader("🌐 Reporte de Simulación")
+                    simulation_html = generate_simulation_report(df, simulation_results)
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.download_button(
+                            label="📥 Descargar Reporte de Simulación",
+                            data=simulation_html,
+                            file_name=f"simulacion_meta_{target_percentage*100:.1f}percent.html",
+                            mime="text/html"
+                        )
+                    
+                    with col2:
+                        # Datos para CSV
+                        simulation_csv = pd.DataFrame([{
+                            'Mes': simulation_results['Mes'],
+                            'Porcentaje_Objetivo': simulation_results['Porcentaje_Objetivo'],
+                            'Metodo': 'Promedio',
+                            'Numerador_Requerido': simulation_results['Promedio_num'],
+                            'Denominador_Proyectado': simulation_results['Promedio_den']
+                        }, {
+                            'Mes': simulation_results['Mes'],
+                            'Porcentaje_Objetivo': simulation_results['Porcentaje_Objetivo'],
+                            'Metodo': 'Lineal',
+                            'Numerador_Requerido': simulation_results['Pronostico_Lineal_num'],
+                            'Denominador_Proyectado': simulation_results['Pronostico_Lineal_den']
+                        }, {
+                            'Mes': simulation_results['Mes'],
+                            'Porcentaje_Objetivo': simulation_results['Porcentaje_Objetivo'],
+                            'Metodo': 'MC_Adaptativo',
+                            'Numerador_Requerido': simulation_results['MC_Adaptativo_num'],
+                            'Denominador_Proyectado': simulation_results['MC_Adaptativo_den']
+                        }, {
+                            'Mes': simulation_results['Mes'],
+                            'Porcentaje_Objetivo': simulation_results['Porcentaje_Objetivo'],
+                            'Metodo': 'MC_Estacional',
+                            'Numerador_Requerido': simulation_results['MC_Adaptativo_Estacional_num'],
+                            'Denominador_Proyectado': simulation_results['MC_Adaptativo_Estacional_den']
+                        }])
+                        
+                        csv_data = simulation_csv.to_csv(index=False, encoding='utf-8-sig')
+                        st.download_button(
+                            label="📊 Descargar Datos CSV",
+                            data=csv_data,
+                            file_name=f"datos_simulacion_{target_percentage*100:.1f}percent.csv",
+                            mime="text/csv"
+                        )
 
 if __name__ == "__main__":
     main()
