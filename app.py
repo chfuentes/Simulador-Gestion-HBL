@@ -11,7 +11,7 @@ warnings.filterwarnings('ignore')
 
 # Configuración optimizada para producción
 st.set_page_config(
-    page_title="Simulador Epidemiológico",
+    page_title="Simulador Estadístico",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -27,28 +27,77 @@ SEED = 42
 
 @st.cache_data(show_spinner=False)
 def read_and_trim(uploaded_file):
-    """Lee y procesa el archivo CSV subido (con cache para mejor performance)"""
+    """Lee y procesa el archivo CSV subido - Versión robusta"""
     try:
-        # Leer el archivo
-        if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file, sep=None, engine="python", encoding='utf-8')
+        # Leer el contenido del archivo para diagnóstico
+        content = uploaded_file.getvalue().decode('latin-1')
+        lines = content.split('\n')
+        
+        st.write("🔍 **Diagnóstico:** Primera línea del archivo:")
+        st.code(lines[0] if lines else "Archivo vacío")
+        
+        # Intentar diferentes combinaciones
+        encodings = ['latin-1', 'utf-8', 'cp1252']
+        separators = [';', ',', '\t']
+        
+        for encoding in encodings:
+            for separator in separators:
+                try:
+                    uploaded_file.seek(0)  # Resetear el archivo
+                    df = pd.read_csv(
+                        uploaded_file, 
+                        sep=separator,
+                        encoding=encoding,
+                        decimal=',',
+                        engine='python'
+                    )
+                    st.success(f"✅ Archivo leído con: encoding={encoding}, separator='{separator}'")
+                    break
+                except:
+                    continue
+            else:
+                continue
+            break
         else:
-            st.error("Por favor sube un archivo CSV")
+            st.error("No se pudo leer el archivo con ninguna combinación de encoding/separador")
             return None
+            
     except Exception as e:
-        try:
-            df = pd.read_csv(uploaded_file, sep=";", engine="python", encoding='utf-8')
-        except Exception as e2:
-            st.error(f"Error al leer el archivo: {e2}")
-            return None
+        st.error(f"Error crítico al leer el archivo: {e}")
+        return None
 
-    # Procesamiento de datos (igual que antes)
-    if "AÑO" in df.columns:
-        df = df.rename(columns={"AÑO": "ANIO"})
-    if "%" in df.columns:
-        df = df.drop(columns=["%"])
-
-    df["MES"] = df["MES"].astype(str).str.strip()
+    # Mostrar columnas detectadas para debugging
+    st.write("📋 **Columnas detectadas en el archivo:**")
+    st.write(df.columns.tolist())
+    
+    # Normalizar nombres de columnas (manejar "AčO" y otros problemas)
+    column_mapping = {}
+    for col in df.columns:
+        col_clean = col.strip().upper()
+        if 'AčO' in col_clean or 'AÑO' in col_clean or 'ANIO' in col_clean or col_clean == 'AčO':
+            column_mapping[col] = 'ANIO'
+        elif 'MES' in col_clean:
+            column_mapping[col] = 'MES'
+        elif 'NUMERADOR' in col_clean:
+            column_mapping[col] = 'NUMERADOR'
+        elif 'DENOMINADOR' in col_clean:
+            column_mapping[col] = 'DENOMINADOR'
+        elif '%' in col_clean:
+            continue  # Saltar columna de porcentaje
+    
+    df = df.rename(columns=column_mapping)
+    
+    # Verificar que tenemos las columnas necesarias
+    required_columns = ['ANIO', 'MES', 'NUMERADOR', 'DENOMINADOR']
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    
+    if missing_columns:
+        st.error(f"❌ Faltan columnas requeridas: {missing_columns}")
+        st.write("Columnas disponibles:", df.columns.tolist())
+        return None
+    
+    # Continuar con el procesamiento normal...
+    df["MES"] = df["MES"].astype(str).str.strip().str.upper()
     df["m"] = df["MES"].map(M2N)
 
     for c in ["NUMERADOR","DENOMINADOR"]:
@@ -65,6 +114,7 @@ def read_and_trim(uploaded_file):
     df = df.dropna(subset=["ANIO","m","NUMERADOR","DENOMINADOR"]).reset_index(drop=True)
     df["pct"] = df["NUMERADOR"] / df["DENOMINADOR"]
     
+    st.success(f"✅ Datos procesados correctamente: {len(df)} registros")
     return df
 
 def average_method(df):
@@ -327,6 +377,7 @@ def main():
     st.markdown("""
     **Aplicación web para proyecciones epidemiológicas**  
     Carga un archivo CSV con datos históricos para generar proyecciones de los próximos 3 meses usando múltiples métodos estadísticos.
+    Uselo sólo con fines referenciales.
     """)
     
     # Ejemplo de formato
@@ -366,7 +417,7 @@ def main():
         
         st.markdown("---")
         st.markdown("**Desarrollado para análisis epidemiológico**")
-        st.markdown("*Versión 1.0 - Streamlit Cloud*")
+        st.markdown("*Versión 1.0 - Christian Fuentes*")
 
     if uploaded_file is not None:
         # Procesar datos
