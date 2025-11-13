@@ -163,7 +163,7 @@ def average_method(df):
     # Usar los últimos 3 meses para el cálculo del promedio
     last = df.tail(3)
     
-    # Calcular promedios mensuales, no sumas
+    # Calcular promedios mensuales correctamente
     avg_num = last["NUMERADOR"].mean()
     avg_den = last["DENOMINADOR"].mean()
     
@@ -175,8 +175,10 @@ def average_method(df):
     if avg_den <= 0:
         return 0.0, 0.0, 0.0
     
+    # Calcular porcentaje basado en los promedios
     avg_pct = avg_num / avg_den
     return avg_num, avg_den, avg_pct
+
 
 def linear_trend_forecast_improved(y, steps):
     """Pronóstico lineal mejorado con manejo de errores"""
@@ -248,24 +250,27 @@ def mc_simulation_adaptive(muN, sdN, muD, sdD, n=N_SIM, seed=SEED):
     return median_N, median_D, median_pct
 
 def next_three_months_from_last(df):
-    """Determina los próximos períodos a proyectar según la periodicidad"""
-    periodo_info = detect_periodicity(df)
-    
-    if periodo_info['tipo'] == 'mensual':
-        last_m = int(df["m"].iloc[-1])
-        months = [((last_m + i - 1) % 12) + 1 for i in (1,2,3)]
-        return months
-    elif periodo_info['tipo'] == 'trimestral':
-        # Para trimestral, proyectar solo 1 trimestre
-        return [1]  # Solo una proyección
-    elif periodo_info['tipo'] == 'semestral':
-        # Para semestral, proyectar solo 1 semestre  
-        return [1]  # Solo una proyección
-    else:
-        # Por defecto, mensual
-        last_m = int(df["m"].iloc[-1])
-        months = [((last_m + i - 1) % 12) + 1 for i in (1,2,3)]
-        return months
+    # Detectar y mostrar periodicidad
+    try:
+        periodo_info = detect_periodicity(df)
+        tipo_periodo = periodo_info['tipo']
+        confianza = periodo_info['confianza']
+        
+        if tipo_periodo == 'mensual':
+            st.success(f"📅 **Periodicidad detectada:** MENSUAL (confianza: {confianza})")
+            st.info("Se proyectarán los próximos 3 meses")
+        elif tipo_periodo == 'trimestral':
+            st.warning(f"📅 **Periodicidad detectada:** TRIMESTRAL (confianza: {confianza})")
+            st.info("Se proyectará solo el próximo trimestre")
+        elif tipo_periodo == 'semestral':
+            st.warning(f"📅 **Periodicidad detectada:** SEMESTRAL (confianza: {confianza})")
+            st.info("Se proyectará solo el próximo semestre")
+        else:
+            st.error(f"📅 **Periodicidad:** IRREGULAR (confianza: {confianza})")
+            st.warning("Los datos no siguen un patrón claro. Se usarán proyecciones mensuales por defecto.")
+            
+    except Exception as e:
+        st.warning("📅 No se pudo detectar la periodicidad. Usando proyección mensual por defecto.")
 
 def generate_comprehensive_report(df, results):
     """Genera reporte con todos los resultados"""
@@ -396,41 +401,48 @@ def detect_periodicity(df):
     if len(df) < 2:
         return {'tipo': 'mensual', 'confianza': 'baja', 'mensaje': 'Datos insuficientes para detectar periodicidad'}
     
-    # Ordenar por año y mes
-    df_sorted = df.sort_values(['ANIO', 'm']).reset_index(drop=True)
-    
-    # Calcular diferencias entre meses consecutivos
-    diffs = []
-    for i in range(1, len(df_sorted)):
-        current = df_sorted.iloc[i]
-        previous = df_sorted.iloc[i-1]
+    try:
+        # Ordenar por año y mes
+        df_sorted = df.sort_values(['ANIO', 'm']).reset_index(drop=True)
         
-        # Calcular diferencia en meses
-        diff_meses = (current['ANIO'] - previous['ANIO']) * 12 + (current['m'] - previous['m'])
-        diffs.append(diff_meses)
-    
-    # Analizar diferencias
-    diff_unique = list(set(diffs))
-    diff_counts = {diff: diffs.count(diff) for diff in diff_unique}
-    
-    # Determinar periodicidad
-    if all(diff == 1 for diff in diffs):
-        return {'tipo': 'mensual', 'confianza': 'alta', 'diferencia': 1}
-    elif all(diff == 3 for diff in diffs):
-        return {'tipo': 'trimestral', 'confianza': 'alta', 'diferencia': 3}
-    elif all(diff == 6 for diff in diffs):
-        return {'tipo': 'semestral', 'confianza': 'alta', 'diferencia': 6}
-    elif len(diff_unique) == 1 and diff_unique[0] in [1, 3, 6]:
-        return {'tipo': ['mensual', 'trimestral', 'semestral'][diff_unique[0]//2], 'confianza': 'alta', 'diferencia': diff_unique[0]}
-    else:
-        # Periodicidad mixta o irregular
-        most_common_diff = max(diff_counts, key=diff_counts.get)
-        if diff_counts[most_common_diff] / len(diffs) >= 0.7:  # 70% de coincidencia
-            tipo = {1: 'mensual', 3: 'trimestral', 6: 'semestral'}.get(most_common_diff, 'irregular')
-            return {'tipo': tipo, 'confianza': 'media', 'diferencia': most_common_diff}
+        # Calcular diferencias entre meses consecutivos
+        diffs = []
+        for i in range(1, len(df_sorted)):
+            current = df_sorted.iloc[i]
+            previous = df_sorted.iloc[i-1]
+            
+            # Calcular diferencia en meses
+            diff_meses = (current['ANIO'] - previous['ANIO']) * 12 + (current['m'] - previous['m'])
+            diffs.append(diff_meses)
+        
+        # Si no hay diferencias calculadas, retornar mensual por defecto
+        if not diffs:
+            return {'tipo': 'mensual', 'confianza': 'baja', 'mensaje': 'No se pudieron calcular diferencias'}
+        
+        # Analizar diferencias
+        diff_unique = list(set(diffs))
+        diff_counts = {diff: diffs.count(diff) for diff in diff_unique}
+        
+        # Determinar periodicidad
+        if all(diff == 1 for diff in diffs):
+            return {'tipo': 'mensual', 'confianza': 'alta', 'diferencia': 1}
+        elif all(diff == 3 for diff in diffs):
+            return {'tipo': 'trimestral', 'confianza': 'alta', 'diferencia': 3}
+        elif all(diff == 6 for diff in diffs):
+            return {'tipo': 'semestral', 'confianza': 'alta', 'diferencia': 6}
         else:
-            return {'tipo': 'irregular', 'confianza': 'baja', 'diferencia': diff_unique}
-
+            # Periodicidad mixta o irregular
+            most_common_diff = max(diff_counts, key=diff_counts.get)
+            if diff_counts[most_common_diff] / len(diffs) >= 0.7:  # 70% de coincidencia
+                tipo = {1: 'mensual', 3: 'trimestral', 6: 'semestral'}.get(most_common_diff, 'irregular')
+                return {'tipo': tipo, 'confianza': 'media', 'diferencia': most_common_diff}
+            else:
+                return {'tipo': 'irregular', 'confianza': 'baja', 'diferencia': diff_unique}
+    
+    except Exception as e:
+        # En caso de cualquier error, retornar mensual por defecto
+        return {'tipo': 'mensual', 'confianza': 'baja', 'mensaje': f'Error en detección: {str(e)}'}
+    
 def get_next_period(df, period_type):
     """
     Calcula el próximo período según el tipo de periodicidad
@@ -715,7 +727,6 @@ def main():
             excel_buffer = io.BytesIO()
             
             # Crear workbook desde cero en lugar de usar pd.ExcelWriter
-            from openpyxl import Workbook
             wb = Workbook()
             
             # Remover la hoja por defecto
@@ -834,7 +845,7 @@ def main():
         st.markdown("---")
         st.markdown("""
         PRISMA - Proyección y Simulación para Metas COMGES  
-        Versión 0.85 - 2025-06-15 
+        Versión 0.87 - 2025-06-15 
         © Christian Fuentes + IA.
                     
                     """)
@@ -876,8 +887,8 @@ def main():
                 # Parámetros estacionales
                 muNm = muN * idxN.get(month_num, 1.0) if not idxN.empty else muN
                 muDm = muD * idxD.get(month_num, 1.0) if not idxD.empty else muD
-                sdNm = sdN * np.sqrt(idxN.get(month_num, 1.0)) if not idxN.empty else sdN
-                sdDm = sdD * np.sqrt(idxD.get(month_num, 1.0)) if not idxD.empty else sdD
+                sdNm = sdN * idxN.get(month_num, 1.0) if not idxN.empty else sdN  # SIN sqrt
+                sdDm = sdD * idxD.get(month_num, 1.0) if not idxD.empty else sdD  # SIN sqrt
                 
                 # Método lineal
                 lin_num = predN_lin[i]
@@ -912,7 +923,16 @@ def main():
         tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Resultados Completos", "📈 Gráficos", "🔢 Datos Detallados", "🌐 Reporte HTML", "🎯 Simulador de Metas"])
 
         with tab1:
-            st.subheader("Proyecciones Completas - Todos los Métodos")
+            # Mostrar título según periodicidad
+            periodo_info = detect_periodicity(df)
+            if periodo_info['tipo'] == 'mensual':
+                st.subheader("Proyecciones Completas - Próximos 3 Meses")
+            elif periodo_info['tipo'] == 'trimestral':
+                st.subheader("Proyección - Próximo Trimestre")
+            elif periodo_info['tipo'] == 'semestral':
+                st.subheader("Proyección - Próximo Semestre")
+            else:
+                st.subheader("Proyecciones Completas - Todos los Métodos")
             
             # Crear DataFrame para display
             display_data = []
