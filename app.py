@@ -11,7 +11,7 @@ warnings.filterwarnings('ignore')
 
 # Configuración optimizada para producción
 st.set_page_config(
-    page_title="Simulador Avanzado de Proyecciones Organizacionales",
+    page_title="PRISMA - Proyección y Simulación para Metas COMGES",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -250,7 +250,7 @@ def next_three_months_from_last(df):
     return months
 
 def generate_comprehensive_report(df, results):
-    """Genera reporte HTML completo con todos los resultados"""
+    """Genera reporte con todos los resultados"""
     
     # Crear tabla resumen de porcentajes
     pct_table = pd.DataFrame({
@@ -371,9 +371,9 @@ def generate_comprehensive_report(df, results):
     return html_content
 
 def main():
-    st.title("📊 Simulador Avanzado de Proyecciones Organizacionales")
+    st.title("📊 PRISMA - Proyección y Simulación para Metas COMGES")
     st.markdown("""
-    **Sistema completo de proyecciones **  
+    **Sistema de simulación de proyecciones estadisticas**  
     Carga archivos CSV o Excel para generar proyecciones detalladas de los próximos 3 meses.
     """)
     
@@ -403,6 +403,14 @@ def main():
         - Denominadores estimados
         - Comparación entre métodos
         """)
+
+        st.markdown("---")
+        st.markdown("""
+        PRISMA - Proyección y Simulación para Metas COMGES  
+        Versión 0.8 - 2025-06-15 
+        © Christian Fuentes + IA.
+                    
+                    """)
 
     if uploaded_file is not None:
         # Procesar datos
@@ -502,7 +510,7 @@ def main():
                     })
             
             display_df = pd.DataFrame(display_data)
-            st.dataframe(display_df, use_container_width=True)
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
             
             # Resumen de porcentajes
             st.subheader("Resumen de Porcentajes por Método")
@@ -513,7 +521,7 @@ def main():
                 'MC Adaptativo': [f"{r['MC_Adaptativo_pct']*100:.2f}%" for r in results],
                 'MC Adaptativo Estacional': [f"{r['MC_Adaptativo_Estacional_pct']*100:.2f}%" for r in results]
             })
-            st.dataframe(pct_summary, use_container_width=True)
+            st.dataframe(pct_summary, use_container_width=True, hide_index=True)
         
         with tab2:
             st.subheader("Comparación Gráfica de Métodos")
@@ -543,25 +551,10 @@ def main():
             ax1.set_title('Comparación de Porcentajes por Método')
             ax1.legend()
             ax1.grid(axis='y', alpha=0.3)
-            
-            # Gráfico 2: Numeradores
-            for i, (method, label, color) in enumerate(zip(methods, labels, colors)):
-                numerators = [r[f'{method}_num'] for r in results]
-                ax2.bar(x + (i-1.5)*width, numerators, width, label=label, color=color, alpha=0.8)
-            
-            ax2.set_xticks(x)
-            ax2.set_xticklabels([r['Mes'] for r in results])
-            ax2.set_ylabel('Numerador')
-            ax2.set_title('Comparación de Numeradores por Método')
-            ax2.legend()
-            ax2.grid(axis='y', alpha=0.3)
-            
-            plt.tight_layout()
-            st.pyplot(fig)
-        
+                    
         with tab3:
             st.subheader("Datos de Entrada Procesados")
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df, use_container_width=True, hide_index=True)
             
             # Estadísticas descriptivas
             st.subheader("Estadísticas Descriptivas")
@@ -569,11 +562,17 @@ def main():
             
             with col1:
                 st.write("**Numerador**")
-                st.write(df['NUMERADOR'].describe())
-            
+                stats_n = df['NUMERADOR'].describe().reset_index()
+                stats_n.columns = ['Estadística', 'Valor']
+                # ✅ CORREGIDO: Ocultar índice
+                st.dataframe(stats_n, use_container_width=True, hide_index=True)
+    
             with col2:
                 st.write("**Denominador**")
-                st.write(df['DENOMINADOR'].describe())
+                stats_d = df['DENOMINADOR'].describe().reset_index()
+                stats_d.columns = ['Estadística', 'Valor']
+                # ✅ CORREGIDO: Ocultar índice
+                st.dataframe(stats_d, use_container_width=True, hide_index=True)
         
         with tab4:
             st.subheader("Reporte HTML Completo")
