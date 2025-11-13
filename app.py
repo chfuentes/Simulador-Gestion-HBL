@@ -159,20 +159,24 @@ def _process_dataframe(df):
 # ============================================================================
 
 def average_method(df):
-    """Método del promedio - retorna numerador, denominador y porcentaje"""
+    """Método del promedio - retorna numerador, denominador y porcentaje PROMEDIO mensual"""
+    # Usar los últimos 3 meses para el cálculo del promedio
     last = df.tail(3)
-    den = last["DENOMINADOR"].sum(min_count=1)
-    num = last["NUMERADOR"].sum(min_count=1)
     
-    if not np.isfinite(den) or den <= 0:
-        den = df["DENOMINADOR"].sum(min_count=1)
-        num = df["NUMERADOR"].sum(min_count=1)
+    # Calcular promedios mensuales, no sumas
+    avg_num = last["NUMERADOR"].mean()
+    avg_den = last["DENOMINADOR"].mean()
     
-    if den <= 0:
+    # Si no hay datos suficientes, usar todos los datos
+    if not np.isfinite(avg_num) or not np.isfinite(avg_den) or avg_den <= 0:
+        avg_num = df["NUMERADOR"].mean()
+        avg_den = df["DENOMINADOR"].mean()
+    
+    if avg_den <= 0:
         return 0.0, 0.0, 0.0
     
-    pct = num / den
-    return num, den, pct
+    avg_pct = avg_num / avg_den
+    return avg_num, avg_den, avg_pct
 
 def linear_trend_forecast_improved(y, steps):
     """Pronóstico lineal mejorado con manejo de errores"""
@@ -244,10 +248,24 @@ def mc_simulation_adaptive(muN, sdN, muD, sdD, n=N_SIM, seed=SEED):
     return median_N, median_D, median_pct
 
 def next_three_months_from_last(df):
-    """Determina los próximos 3 meses a proyectar"""
-    last_m = int(df["m"].iloc[-1])
-    months = [((last_m + i - 1) % 12) + 1 for i in (1,2,3)]
-    return months
+    """Determina los próximos períodos a proyectar según la periodicidad"""
+    periodo_info = detect_periodicity(df)
+    
+    if periodo_info['tipo'] == 'mensual':
+        last_m = int(df["m"].iloc[-1])
+        months = [((last_m + i - 1) % 12) + 1 for i in (1,2,3)]
+        return months
+    elif periodo_info['tipo'] == 'trimestral':
+        # Para trimestral, proyectar solo 1 trimestre
+        return [1]  # Solo una proyección
+    elif periodo_info['tipo'] == 'semestral':
+        # Para semestral, proyectar solo 1 semestre  
+        return [1]  # Solo una proyección
+    else:
+        # Por defecto, mensual
+        last_m = int(df["m"].iloc[-1])
+        months = [((last_m + i - 1) % 12) + 1 for i in (1,2,3)]
+        return months
 
 def generate_comprehensive_report(df, results):
     """Genera reporte con todos los resultados"""
@@ -370,6 +388,109 @@ def generate_comprehensive_report(df, results):
     
     return html_content
 
+def detect_periodicity(df):
+    """
+    Detecta si los datos son mensuales, trimestrales o semestrales
+    basándose en la frecuencia de los registros
+    """
+    if len(df) < 2:
+        return {'tipo': 'mensual', 'confianza': 'baja', 'mensaje': 'Datos insuficientes para detectar periodicidad'}
+    
+    # Ordenar por año y mes
+    df_sorted = df.sort_values(['ANIO', 'm']).reset_index(drop=True)
+    
+    # Calcular diferencias entre meses consecutivos
+    diffs = []
+    for i in range(1, len(df_sorted)):
+        current = df_sorted.iloc[i]
+        previous = df_sorted.iloc[i-1]
+        
+        # Calcular diferencia en meses
+        diff_meses = (current['ANIO'] - previous['ANIO']) * 12 + (current['m'] - previous['m'])
+        diffs.append(diff_meses)
+    
+    # Analizar diferencias
+    diff_unique = list(set(diffs))
+    diff_counts = {diff: diffs.count(diff) for diff in diff_unique}
+    
+    # Determinar periodicidad
+    if all(diff == 1 for diff in diffs):
+        return {'tipo': 'mensual', 'confianza': 'alta', 'diferencia': 1}
+    elif all(diff == 3 for diff in diffs):
+        return {'tipo': 'trimestral', 'confianza': 'alta', 'diferencia': 3}
+    elif all(diff == 6 for diff in diffs):
+        return {'tipo': 'semestral', 'confianza': 'alta', 'diferencia': 6}
+    elif len(diff_unique) == 1 and diff_unique[0] in [1, 3, 6]:
+        return {'tipo': ['mensual', 'trimestral', 'semestral'][diff_unique[0]//2], 'confianza': 'alta', 'diferencia': diff_unique[0]}
+    else:
+        # Periodicidad mixta o irregular
+        most_common_diff = max(diff_counts, key=diff_counts.get)
+        if diff_counts[most_common_diff] / len(diffs) >= 0.7:  # 70% de coincidencia
+            tipo = {1: 'mensual', 3: 'trimestral', 6: 'semestral'}.get(most_common_diff, 'irregular')
+            return {'tipo': tipo, 'confianza': 'media', 'diferencia': most_common_diff}
+        else:
+            return {'tipo': 'irregular', 'confianza': 'baja', 'diferencia': diff_unique}
+
+def get_next_period(df, period_type):
+    """
+    Calcula el próximo período según el tipo de periodicidad
+    """
+    last_row = df.sort_values(['ANIO', 'm']).iloc[-1]
+    last_year = last_row['ANIO']
+    last_month = last_row['m']
+    
+    if period_type == 'mensual':
+        next_month = (last_month % 12) + 1
+        next_year = last_year if next_month > last_month else last_year + 1
+        return {
+            'nombre': f"{N2M[next_month]} {next_year}",
+            'mes_num': next_month,
+            'año': next_year
+        }
+    elif period_type == 'trimestral':
+        # Encontrar el trimestre actual (1: Ene-Mar, 2: Abr-Jun, etc.)
+        current_quarter = (last_month - 1) // 3 + 1
+        next_quarter = (current_quarter % 4) + 1
+        next_year = last_year if next_quarter > current_quarter else last_year + 1
+        
+        quarter_months = {
+            1: ('ENERO', 'MARZO'),
+            2: ('ABRIL', 'JUNIO'), 
+            3: ('JULIO', 'SEPTIEMBRE'),
+            4: ('OCTUBRE', 'DICIEMBRE')
+        }
+        mes_inicio, mes_fin = quarter_months[next_quarter]
+        return {
+            'nombre': f"Trimestre {next_quarter} ({mes_inicio}-{mes_fin}) {next_year}",
+            'trimestre': next_quarter,
+            'año': next_year
+        }
+    elif period_type == 'semestral':
+        # Encontrar el semestre actual (1: Ene-Jun, 2: Jul-Dic)
+        current_semester = 1 if last_month <= 6 else 2
+        next_semester = (current_semester % 2) + 1
+        next_year = last_year if next_semester > current_semester else last_year + 1
+        
+        semester_range = {
+            1: ('ENERO', 'JUNIO'),
+            2: ('JULIO', 'DICIEMBRE')
+        }
+        mes_inicio, mes_fin = semester_range[next_semester]
+        return {
+            'nombre': f"Semestre {next_semester} ({mes_inicio}-{mes_fin}) {next_year}",
+            'semestre': next_semester,
+            'año': next_year
+        }
+    else:
+        # Por defecto, mensual
+        next_month = (last_month % 12) + 1
+        next_year = last_year if next_month > last_month else last_year + 1
+        return {
+            'nombre': f"{N2M[next_month]} {next_year}",
+            'mes_num': next_month,
+            'año': next_year
+        }
+
     #Simulacion de porcentaje
     # Agregar esta función después de las otras funciones de simulación
 
@@ -382,40 +503,62 @@ def simulate_target_percentage(df, target_pct):
     muN, sdN = df["NUMERADOR"].mean(), df["NUMERADOR"].std(ddof=1)
     muD, sdD = df["DENOMINADOR"].mean(), df["DENOMINADOR"].std(ddof=1)
     
-    # Obtener el próximo mes
-    future_month = next_three_months_from_last(df)[0]
-    month_name = N2M[future_month]
+    # Obtener el próximo período según la periodicidad detectada
+    # Detectar periodicidad
+    periodo_info = detect_periodicity(df)
+    st.info(f"📅 **Periodicidad detectada:** {periodo_info['tipo'].upper()} (confianza: {periodo_info['confianza']})")
+
+    if periodo_info['tipo'] == 'irregular':
+        st.error("""
+        ❌ **No se pudo detectar una periodicidad clara en los datos.**
+        
+        **Posibles causas:**
+        - Meses faltantes en la serie temporal
+        - Mezcla de diferentes periodicidades
+        - Datos inconsistentes
+        
+        **Solución:** Asegúrate de que los datos tengan una periodicidad consistente (mensual, trimestral o semestral).
+        """)
+    # Puedes decidir si continuar o no
+
+    next_period = get_next_period(df, periodo_info['tipo'])
+    period_name = next_period['nombre']
     
-    # Índices estacionales
-    idxN, idxD = seasonal_indices(df)
+    # Índices estacionales (solo para periodicidad mensual)
+    idxN, idxD = seasonal_indices(df) if periodo_info['tipo'] == 'mensual' else (pd.Series(), pd.Series())
     
-    # Parámetros estacionales
-    muNm = muN * idxN.get(future_month, 1.0) if not idxN.empty else muN
-    muDm = muD * idxD.get(future_month, 1.0) if not idxD.empty else muD
-    
-    # Método 1: Promedio - mantener denominador histórico, ajustar numerador
+    # Método 1: Promedio - usar promedio mensual histórico
     avg_num, avg_den, avg_pct = average_method(df)
-    target_avg_num = target_pct * avg_den
-    target_avg_den = avg_den  # Mantener denominador histórico
+    target_avg_num = round(target_pct * avg_den)
+    target_avg_den = round(avg_den)
     
-    # Método 2: Lineal - proyectar denominador y calcular numerador necesario
+    # Método 2: Lineal - proyectar y redondear
     predN_lin = linear_trend_forecast_improved(df["NUMERADOR"], steps=1)[0]
     predD_lin = linear_trend_forecast_improved(df["DENOMINADOR"], steps=1)[0]
-    target_lin_num = target_pct * predD_lin
-    target_lin_den = predD_lin
+    target_lin_num = round(target_pct * predD_lin)
+    target_lin_den = round(predD_lin)
     
-    # Método 3: MC Adaptativo - usar distribución del denominador y calcular numerador
+    # Método 3: MC Adaptativo - redondear resultados
     mc_num, mc_den, mc_pct = mc_simulation_adaptive(muN, sdN, muD, sdD, seed=SEED)
-    target_mc_num = target_pct * mc_den
-    target_mc_den = mc_den
+    target_mc_num = round(target_pct * mc_den)
+    target_mc_den = round(mc_den)
     
-    # Método 4: MC Estacional - usar distribución estacional del denominador
-    mc_seas_num, mc_seas_den, mc_seas_pct = mc_simulation_adaptive(muNm, sdN, muDm, sdD, seed=SEED + 1000)
-    target_mc_seas_num = target_pct * mc_seas_den
-    target_mc_seas_den = mc_seas_den
+    # Método 4: MC Estacional (solo para mensual)
+    if not idxN.empty and periodo_info['tipo'] == 'mensual':
+        future_month = next_period['mes_num'] if 'mes_num' in next_period else 1
+        muNm = muN * idxN.get(future_month, 1.0)
+        muDm = muD * idxD.get(future_month, 1.0)
+        mc_seas_num, mc_seas_den, mc_seas_pct = mc_simulation_adaptive(muNm, sdN, muDm, sdD, seed=SEED + 1000)
+        target_mc_seas_num = round(target_pct * mc_seas_den)
+        target_mc_seas_den = round(mc_seas_den)
+    else:
+        # Para trimestral/semestral, usar MC normal
+        target_mc_seas_num = target_mc_num
+        target_mc_seas_den = target_mc_den
     
     return {
-        'Mes': month_name,
+        'Periodo': period_name,
+        'Tipo_Periodo': periodo_info['tipo'],
         'Porcentaje_Objetivo': target_pct,
         # Promedio
         'Promedio_num': target_avg_num,
@@ -563,31 +706,7 @@ def main():
         )
         st.markdown("---")
         st.header("📋 Plantillas")
-        
-        # Plantilla para CSV
-        st.subheader("📄 Plantilla CSV")
-        
-        # Crear datos de ejemplo para la plantilla
-        template_data = {
-            'AÑO': [2024, 2024, 2024, 2024, 2024, 2024],
-            'MES': ['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO'],
-            'NUMERADOR': [150, 120, 180, 160, 140, 170],
-            'DENOMINADOR': [1000, 950, 1100, 1050, 980, 1200]
-        }
-        
-        template_df = pd.DataFrame(template_data)
-        
-        # Convertir a CSV
-        csv_template = template_df.to_csv(index=False, sep=';', encoding='utf-8-sig')
-        
-        st.download_button(
-            label="📥 Descargar Plantilla CSV",
-            data=csv_template,
-            file_name="plantilla_prisma.csv",
-            mime="text/csv",
-            help="Plantilla en formato CSV con separador punto y coma"
-        )
-        
+               
         # Plantilla para Excel
         st.subheader("📊 Plantilla Excel")
         
@@ -755,13 +874,14 @@ def main():
             
             # Crear DataFrame para display
             display_data = []
+            # En la pestaña de resultados, modificar la creación de display_data:
             for result in results:
                 for method in ['Promedio', 'Pronostico_Lineal', 'MC_Adaptativo', 'MC_Adaptativo_Estacional']:
                     display_data.append({
-                        'Mes': result['Mes'],
+                        'Período': result['Mes'],  # Cambiar 'Mes' por 'Período'
                         'Método': method.replace('_', ' ').title(),
-                        'Numerador': result[f'{method}_num'],
-                        'Denominador': result[f'{method}_den'],
+                        'Numerador': round(result[f'{method}_num']),  # Redondear valores
+                        'Denominador': round(result[f'{method}_den']),  # Redondear valores
                         'Porcentaje': f"{result[f'{method}_pct']*100:.2f}%"
                     })
             
