@@ -526,10 +526,8 @@ def main():
         with tab2:
             st.subheader("Comparación Gráfica de Métodos")
             
-            # Gráfico de porcentajes
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-            
-            # Gráfico 1: Porcentajes
+            # Gráfico de porcentajes. Fix
+            fig, ax = plt.subplots(figsize=(12, 6))
             methods = ['Promedio', 'Pronostico_Lineal', 'MC_Adaptativo', 'MC_Adaptativo_Estacional']
             labels = ['Promedio', 'Lineal', 'MC Adaptativo', 'MC Estacional']
             colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
@@ -539,18 +537,50 @@ def main():
             
             for i, (method, label, color) in enumerate(zip(methods, labels, colors)):
                 percentages = [r[f'{method}_pct'] * 100 for r in results]
-                ax1.bar(x + (i-1.5)*width, percentages, width, label=label, color=color, alpha=0.8)
+                bars = ax.bar(x + (i-1.5)*width, percentages, width, label=label, color=color, alpha=0.8)
                 
+                # Agregar valores en las barras
                 for j, pct in enumerate(percentages):
-                    ax1.text(x[j] + (i-1.5)*width, pct + 0.5, f'{pct:.1f}%', 
-                            ha='center', va='bottom', fontsize=8)
+                    ax.text(x[j] + (i-1.5)*width, pct + 0.1, f'{pct:.1f}%', 
+                        ha='center', va='bottom', fontsize=9, fontweight='bold')
             
-            ax1.set_xticks(x)
-            ax1.set_xticklabels([r['Mes'] for r in results])
-            ax1.set_ylabel('Porcentaje (%)')
-            ax1.set_title('Comparación de Porcentajes por Método')
-            ax1.legend()
-            ax1.grid(axis='y', alpha=0.3)
+            ax.set_xticks(x)
+            ax.set_xticklabels([r['Mes'] for r in results])
+            ax.set_ylabel('Porcentaje (%)')
+            ax.set_title('Comparación de Porcentajes Proyectados por Método')
+            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            ax.grid(axis='y', alpha=0.3)
+            plt.tight_layout()
+            
+            # ✅ MOSTRAR EL GRÁFICO
+            st.pyplot(fig)
+            
+            # Análisis de variabilidad entre métodos
+            st.subheader("📈 Análisis de Variabilidad entre Métodos")
+            variability_data = []
+            for r in results:
+                pcts = [r['Promedio_pct']*100, r['Pronostico_Lineal_pct']*100, 
+                    r['MC_Adaptativo_pct']*100, r['MC_Adaptativo_Estacional_pct']*100]
+                variability_data.append({
+                    'Mes': r['Mes'],
+                    'Mínimo': f"{min(pcts):.2f}%",
+                    'Máximo': f"{max(pcts):.2f}%", 
+                    'Diferencia': f"{max(pcts)-min(pcts):.2f}%",
+                    'Recomendado (MC Estacional)': f"{r['MC_Adaptativo_Estacional_pct']*100:.2f}%"
+                })
+            
+            variability_df = pd.DataFrame(variability_data)
+            st.dataframe(variability_df, use_container_width=True, hide_index=True)
+            
+            # Interpretación
+            st.info("""
+            **💡 Interpretación del Gráfico:**
+            - **Promedio**: Método conservador basado en datos históricos recientes
+            - **Lineal**: Captura tendencias ascendentes o descendentes
+            - **MC Adaptativo**: Considera la variabilidad natural de los datos
+            - **MC Estacional**: Incluye patrones mensuales históricos (Recomendado)
+            """)
+        
                     
         with tab3:
             st.subheader("Datos de Entrada Procesados")
