@@ -27,62 +27,112 @@ SEED = 42
 
 @st.cache_data(show_spinner=False)
 def read_and_trim(uploaded_file):
-    """Lee y procesa el archivo CSV subido - Versión robusta"""
+    """Lee y procesa archivos CSV o Excel subidos"""
     try:
-        # Leer el contenido del archivo para diagnóstico
-        content = uploaded_file.getvalue().decode('latin-1')
-        lines = content.split('\n')
+        # Determinar el tipo de archivo
+        file_extension = uploaded_file.name.split('.')[-1].lower()
         
-        st.write("🔍 **Diagnóstico:** Primera línea del archivo:")
-        st.code(lines[0] if lines else "Archivo vacío")
-        
-        # Intentar diferentes combinaciones
-        encodings = ['latin-1', 'utf-8', 'cp1252']
-        separators = [';', ',', '\t']
-        
-        for encoding in encodings:
-            for separator in separators:
-                try:
-                    uploaded_file.seek(0)  # Resetear el archivo
-                    df = pd.read_csv(
-                        uploaded_file, 
-                        sep=separator,
-                        encoding=encoding,
-                        decimal=',',
-                        engine='python'
-                    )
-                    st.success(f"✅ Archivo leído con: encoding={encoding}, separator='{separator}'")
-                    break
-                except:
-                    continue
-            else:
-                continue
-            break
+        if file_extension in ['csv']:
+            # Procesar archivo CSV
+            return _process_csv_file(uploaded_file)
+        elif file_extension in ['xls', 'xlsx']:
+            # Procesar archivo Excel
+            return _process_excel_file(uploaded_file)
         else:
-            st.error("No se pudo leer el archivo con ninguna combinación de encoding/separador")
+            st.error(f"Formato de archivo no soportado: {file_extension}")
             return None
             
     except Exception as e:
-        st.error(f"Error crítico al leer el archivo: {e}")
+        st.error(f"Error al leer el archivo: {e}")
         return None
 
-    # Mostrar columnas detectadas para debugging
+def _process_csv_file(uploaded_file):
+    """Procesa archivos CSV"""
+    # Intentar diferentes combinaciones de encoding y separador
+    encodings = ['latin-1', 'utf-8', 'cp1252', 'iso-8859-1']
+    separators = [';', ',', '\t']
+    
+    for encoding in encodings:
+        for separator in separators:
+            try:
+                uploaded_file.seek(0)  # Resetear el archivo
+                df = pd.read_csv(
+                    uploaded_file, 
+                    sep=separator,
+                    encoding=encoding,
+                    decimal=',',
+                    engine='python',
+                    thousands='.'  # Para formato europeo 1.000,00
+                )
+                st.success(f"✅ CSV leído con: encoding={encoding}, separator='{separator}'")
+                return _process_dataframe(df)
+            except Exception as e:
+                continue
+    
+    # Si fallan todas las combinaciones, mostrar error
+    st.error("No se pudo leer el archivo CSV. Verifica el formato.")
+    return None
+
+def _process_excel_file(uploaded_file):
+    """Procesa archivos Excel"""
+    try:
+        # Leer el archivo Excel
+        uploaded_file.seek(0)
+        excel_file = pd.ExcelFile(uploaded_file)
+        
+        # Mostrar las hojas disponibles
+        if len(excel_file.sheet_names) > 1:
+            st.info(f"📑 Hojas disponibles: {excel_file.sheet_names}")
+            # Por defecto usar la primera hoja, pero podrías agregar selección
+            sheet_name = excel_file.sheet_names[0]
+            st.write(f"Usando hoja: '{sheet_name}'")
+        else:
+            sheet_name = excel_file.sheet_names[0]
+        
+        # Leer la hoja seleccionada
+        df = pd.read_excel(
+            uploaded_file, 
+            sheet_name=sheet_name,
+            engine='openpyxl'  # Para xlsx, para xls usar 'xlrd'
+        )
+        
+        st.success(f"✅ Excel leído correctamente - Hoja: '{sheet_name}'")
+        return _process_dataframe(df)
+        
+    except Exception as e:
+        st.error(f"Error al leer archivo Excel: {e}")
+        # Intentar con engine alternativo para xls
+        if uploaded_file.name.endswith('.xls'):
+            try:
+                uploaded_file.seek(0)
+                df = pd.read_excel(uploaded_file, engine='xlrd')
+                return _process_dataframe(df)
+            except:
+                st.error("Necesitas instalar 'xlrd' para archivos .xls antiguos")
+        return None
+
+def _process_dataframe(df):
+    """Procesa el DataFrame independientemente del origen (CSV/Excel)"""
+    # Mostrar información del archivo cargado
     st.write("📋 **Columnas detectadas en el archivo:**")
     st.write(df.columns.tolist())
+    st.write(f"📊 **Registros cargados:** {len(df)}")
     
-    # Normalizar nombres de columnas (manejar "AčO" y otros problemas)
+    # Normalizar nombres de columnas
     column_mapping = {}
     for col in df.columns:
-        col_clean = col.strip().upper()
-        if 'AčO' in col_clean or 'AÑO' in col_clean or 'ANIO' in col_clean or col_clean == 'AčO':
+        col_clean = str(col).strip().upper()
+        
+        # Manejar diferentes nombres posibles
+        if any(x in col_clean for x in ['AČO', 'AÑO', 'ANIO', 'AÑO', 'YEAR']):
             column_mapping[col] = 'ANIO'
-        elif 'MES' in col_clean:
+        elif any(x in col_clean for x in ['MES', 'MONTH']):
             column_mapping[col] = 'MES'
-        elif 'NUMERADOR' in col_clean:
+        elif any(x in col_clean for x in ['NUMERADOR', 'NUMERATOR', 'CASOS', 'EVENTOS']):
             column_mapping[col] = 'NUMERADOR'
-        elif 'DENOMINADOR' in col_clean:
+        elif any(x in col_clean for x in ['DENOMINADOR', 'DENOMINATOR', 'POBLACION', 'TOTAL']):
             column_mapping[col] = 'DENOMINADOR'
-        elif '%' in col_clean:
+        elif '%' in col_clean or 'PORCENTAJE' in col_clean or 'PORC' in col_clean:
             continue  # Saltar columna de porcentaje
     
     df = df.rename(columns=column_mapping)
@@ -93,28 +143,68 @@ def read_and_trim(uploaded_file):
     
     if missing_columns:
         st.error(f"❌ Faltan columnas requeridas: {missing_columns}")
-        st.write("Columnas disponibles:", df.columns.tolist())
+        st.write("📋 Columnas disponibles en el archivo:", df.columns.tolist())
+        
+        # Mostrar vista previa para ayudar a identificar columnas
+        st.write("👀 **Vista previa de los datos (primeras 5 filas):**")
+        st.dataframe(df.head())
         return None
     
-    # Continuar con el procesamiento normal...
+    # Limpieza y procesamiento de datos
     df["MES"] = df["MES"].astype(str).str.strip().str.upper()
-    df["m"] = df["MES"].map(M2N)
-
-    for c in ["NUMERADOR","DENOMINADOR"]:
+    
+    # Mapear meses a números
+    mes_mapping = {
+        'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4, 'MAYO': 5, 'JUNIO': 6,
+        'JULIO': 7, 'AGOSTO': 8, 'SEPTIEMBRE': 9, 'OCTUBRE': 10, 'NOVIEMBRE': 11, 'DICIEMBRE': 12,
+        'ENE': 1, 'FEB': 2, 'MAR': 3, 'ABR': 4, 'MAY': 5, 'JUN': 6,
+        'JUL': 7, 'AGO': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DIC': 12
+    }
+    
+    df["m"] = df["MES"].map(mes_mapping)
+    
+    # Si algún mes no se mapeó, mostrar advertencia
+    unmapped_months = df[df["m"].isna()]["MES"].unique()
+    if len(unmapped_months) > 0:
+        st.warning(f"⚠️ Meses no reconocidos: {list(unmapped_months)}")
+        # Eliminar filas con meses no reconocidos
+        df = df.dropna(subset=["m"])
+    
+    # Convertir columnas numéricas
+    for c in ["NUMERADOR", "DENOMINADOR"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
-
-    df = df.dropna(how="all").sort_values(["ANIO","m"], na_position="last").reset_index(drop=True)
-
-    essential = ["ANIO","m","NUMERADOR","DENOMINADOR"]
+    
+    # Eliminar filas totalmente vacías y ordenar
+    df = df.dropna(how="all").sort_values(["ANIO", "m"], na_position="last").reset_index(drop=True)
+    
+    # Cortar en la primera fila con algún faltante en columnas clave
+    essential = ["ANIO", "m", "NUMERADOR", "DENOMINADOR"]
     invalid_mask = df[essential].isna().any(axis=1)
     if invalid_mask.any():
         cut_idx = invalid_mask.idxmax()
         df = df.loc[:cut_idx-1].reset_index(drop=True)
-
-    df = df.dropna(subset=["ANIO","m","NUMERADOR","DENOMINADOR"]).reset_index(drop=True)
+    
+    # Descarta cualquier fila residual vacía en columnas clave
+    df = df.dropna(subset=essential).reset_index(drop=True)
+    
+    if len(df) == 0:
+        st.error("❌ No hay datos válidos después del procesamiento")
+        return None
+    
+    # Calcular porcentaje
     df["pct"] = df["NUMERADOR"] / df["DENOMINADOR"]
     
-    st.success(f"✅ Datos procesados correctamente: {len(df)} registros")
+    st.success(f"✅ Datos procesados correctamente: {len(df)} registros válidos")
+    
+    # Mostrar resumen
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Período cubierto", f"{len(df)} meses")
+    with col2:
+        st.metric("Numerador promedio", f"{df['NUMERADOR'].mean():.1f}")
+    with col3:
+        st.metric("Porcentaje promedio", f"{df['pct'].mean():.2%}")
+    
     return df
 
 def average_method(df):
@@ -401,9 +491,9 @@ def main():
     with st.sidebar:
         st.header("📁 Cargar Datos")
         uploaded_file = st.file_uploader(
-            "Selecciona tu archivo CSV", 
-            type=['csv'],
-            help="El archivo debe tener columnas: AÑO, MES, NUMERADOR, DENOMINADOR"
+            "Selecciona tu archivo de datos", 
+            type=['csv', 'xlsx', 'xls'],  # ✅ Ahora soporta ambos formatos
+            help="Formatos soportados: CSV, Excel (.xlsx, .xls). El archivo debe tener columnas: AÑO, MES, NUMERADOR, DENOMINADOR"
         )
         
         st.markdown("---")
